@@ -673,3 +673,207 @@ type = "object"
 additionalProperties = false
 required = ["report"]
 properties.report = { type = "string", description = "覆盖了哪些内容、哪些没有找到或存疑、建议的后续主题" }
+
+# ───────────────────────────── Book agent (M21 21.4) ─────────────────────────────
+
+[tools.book_overview]
+description = '''查看全书索引：轨道与章节、设定文档、人物设计、档案与目标统计、资料任务、打开中的会话与待处理提案。'''
+examples = [ {} ]
+[tools.book_overview.input_schema]
+type = "object"
+additionalProperties = false
+
+[tools.open_chapter]
+description = '''读取任意轨道、任意状态的章节。part 选择正文、细纲、参考要点、写作提示或摘要；正文可按段落继续阅读。'''
+examples = [ { chapter = "12" } ]
+[tools.open_chapter.input_schema]
+type = "object"
+additionalProperties = false
+required = ["chapter"]
+properties.chapter = { type = "string", description = "章节：\"12\" 表示正文第12章，\"#345\" 表示章节编号" }
+properties.part = { type = "string", enum = ["text", "outline", "reference_notes", "guidance", "summary"], description = "要读取的部分，默认正文" }
+properties.from_pid = { type = "string", description = "从该段落开始读取（可选）" }
+properties.max_chars = { type = "integer", minimum = 1, maximum = 20000, description = "正文最多读取多少字，默认 8000" }
+
+[tools.read_setting_doc]
+description = '''按偏移读取一份设定文档，每次最多 12,000 字。需要分段阅读大纲、世界观或主角设定时使用。'''
+examples = [ { doc = "world" } ]
+[tools.read_setting_doc.input_schema]
+type = "object"
+additionalProperties = false
+required = ["doc"]
+properties.doc = { type = "string", enum = ["outline", "world", "protagonist"], description = "设定文档" }
+properties.offset = { type = "integer", minimum = 0, description = "从第几个字符开始（可选）" }
+
+[tools.read_characters]
+description = '''列出人物设计，按重要性排序；指定 name 时读取该人物的完整设计。'''
+examples = [ {} ]
+[tools.read_characters.input_schema]
+type = "object"
+additionalProperties = false
+properties.name = { type = "string", description = "人物名称（可选，不填则列出全部）" }
+
+[tools.list_goals]
+description = '''列出本书共享范围的目标节点，可按状态或层级筛选；包含可推进标记。'''
+examples = [ {} ]
+[tools.list_goals.input_schema]
+type = "object"
+additionalProperties = false
+properties.status = { type = "string", enum = ["open", "active", "waiting", "done", "dropped", "all"], description = "目标状态，默认 open" }
+properties.level = { type = "string", enum = ["goal", "plan", "task"], description = "目标层级（可选）" }
+
+[tools.list_research]
+description = '''列出本书的资料任务，可按状态筛选。'''
+examples = [ {} ]
+[tools.list_research.input_schema]
+type = "object"
+additionalProperties = false
+properties.status = { type = "string", enum = ["draft", "ready", "deferred", "running", "done", "failed", "cancelled"], description = "任务状态（可选）" }
+
+[tools.list_sessions]
+description = '''列出本书的会话，默认列出打开中的会话；可按状态和类型筛选。'''
+examples = [ {} ]
+[tools.list_sessions.input_schema]
+type = "object"
+additionalProperties = false
+properties.status = { type = "string", description = "状态，默认 open，也可用 all" }
+properties.kind = { type = "string", description = "会话类型（可选）" }
+
+[tools.create_chapter]
+description = '''在轨道末尾创建一个 planned 章节。'''
+examples = [ { track = "main", title = "新章节" } ]
+[tools.create_chapter.input_schema]
+type = "object"
+additionalProperties = false
+required = ["title"]
+properties.track = { type = "string", description = "轨道：默认 main，也可用 #id（可选）" }
+properties.title = { type = "string", description = "章节标题" }
+properties.guidance = { type = "string", description = "写作提示（可选）" }
+
+[tools.edit_chapter]
+description = '''修改章节标题、写作提示、细纲或参考要点；细纲与参考要点二选一，find 必须恰好匹配一次。'''
+examples = [ { chapter = "12", title = "新标题" } ]
+[tools.edit_chapter.input_schema]
+type = "object"
+additionalProperties = false
+required = ["chapter"]
+properties.chapter = { type = "string", description = "章节：\"12\" 或 \"#345\"" }
+properties.title = { type = "string", description = "新标题（可选）" }
+properties.guidance = { type = "string", description = "写作提示（可选）" }
+properties.outline = { type = "string", description = "完整细纲（可选）" }
+properties.outline_edits = { type = "array", description = "细纲局部修改（可选）", items = { type = "object", additionalProperties = false, required = ["find", "replace"], properties = { find = { type = "string", description = "查找文本" }, replace = { type = "string", description = "替换文本" } } } }
+properties.reference_notes = { type = "string", description = "完整参考要点（可选）" }
+properties.notes_edits = { type = "array", description = "参考要点局部修改（可选）", items = { type = "object", additionalProperties = false, required = ["find", "replace"], properties = { find = { type = "string", description = "查找文本" }, replace = { type = "string", description = "替换文本" } } } }
+
+[tools.edit_chapter_text]
+description = '''按 find/replace 修改章节正文；每一处 find 必须恰好匹配一次，按顺序应用。'''
+examples = [ { chapter = "12", edits = [ { find = "旧", replace = "新" } ] } ]
+[tools.edit_chapter_text.input_schema]
+type = "object"
+additionalProperties = false
+required = ["chapter", "edits"]
+properties.chapter = { type = "string", description = "章节：\"12\" 或 \"#345\"" }
+properties.edits = { type = "array", minItems = 1, description = "正文修改", items = { type = "object", additionalProperties = false, required = ["find", "replace"], properties = { find = { type = "string", description = "查找文本" }, replace = { type = "string", description = "替换文本" } } } }
+
+[tools.delete_canon_record]
+description = '''删除一条共享档案记录（实体、关系、时间线、记忆或伏笔），写入变更日志以便恢复。'''
+examples = [ { target_type = "entity", id = 12, note = "合并后删除" } ]
+[tools.delete_canon_record.input_schema]
+type = "object"
+additionalProperties = false
+required = ["target_type", "id", "note"]
+properties.target_type = { type = "string", enum = ["entity", "relation", "timeline_event", "memory_note", "foreshadowing"], description = "记录类型" }
+properties.id = { type = "integer", description = "记录编号" }
+properties.note = { type = "string", description = "删除原因" }
+
+[tools.create_goal]
+description = '''创建一个共享目标节点，遵循目标树规则。'''
+examples = [ { level = "goal", title = "守住剑冢", purpose = "保护传承" } ]
+[tools.create_goal.input_schema]
+type = "object"
+additionalProperties = false
+required = ["level", "title", "purpose"]
+properties.level = { type = "string", enum = ["goal", "plan", "task"], description = "目标层级" }
+properties.title = { type = "string", description = "标题" }
+properties.purpose = { type = "string", description = "目的" }
+properties.parent_id = { type = "integer", description = "父节点（可选）" }
+properties.status = { type = "string", enum = ["active", "waiting", "done", "dropped"], description = "状态（可选）" }
+properties.chapter_from = { type = "integer", description = "起始章节（可选）" }
+properties.chapter_to = { type = "integer", description = "结束章节（可选）" }
+properties.conditions = { type = "array", description = "条件（可选）", items = { type = "object", additionalProperties = false, description = "目标条件" } }
+properties.entity_ids = { type = "array", description = "关联实体（可选）", items = { type = "integer", description = "实体编号" } }
+properties.event_ids = { type = "array", description = "关联事件（可选）", items = { type = "integer", description = "事件编号" } }
+properties.foreshadowing_ids = { type = "array", description = "关联伏笔（可选）", items = { type = "integer", description = "伏笔编号" } }
+properties.note = { type = "string", description = "变更说明" }
+
+[tools.update_goal]
+description = '''修改一个共享目标节点，可提交状态和局部字段。'''
+examples = [ { node = 1, note = "推进", status = "active" } ]
+[tools.update_goal.input_schema]
+type = "object"
+additionalProperties = false
+required = ["node", "note"]
+properties.node = { type = "integer", description = "目标节点编号" }
+properties.note = { type = "string", description = "变更说明" }
+properties.title = { type = "string", description = "标题（可选）" }
+properties.purpose = { type = "string", description = "目的（可选）" }
+properties.status = { type = "string", enum = ["active", "waiting", "done", "dropped"], description = "状态（可选）" }
+properties.confirm_open_children = { type = "boolean", description = "确认完成仍有打开子节点（可选）" }
+
+[tools.create_research_task]
+description = '''为本书创建一个 ready 的资料主题任务，作者身份。'''
+examples = [ { topic = "宋代茶楼", requirements = "布局与经营", scope = "宋代社会" } ]
+[tools.create_research_task.input_schema]
+type = "object"
+additionalProperties = false
+required = ["topic", "requirements", "scope"]
+properties.topic = { type = "string", description = "主题" }
+properties.requirements = { type = "string", description = "具体要求" }
+properties.scope = { type = "string", description = "知识范围名称" }
+
+[tools.update_research_task]
+description = '''修改资料任务；可编辑主题、要求、范围或改为 deferred/ready。'''
+examples = [ { task = 1, requirements = "补充茶楼布局" } ]
+[tools.update_research_task.input_schema]
+type = "object"
+additionalProperties = false
+required = ["task"]
+properties.task = { type = "integer", description = "任务编号" }
+properties.topic = { type = "string", description = "主题（可选）" }
+properties.requirements = { type = "string", description = "具体要求（可选）" }
+properties.scope = { type = "string", description = "知识范围（可选）" }
+properties.status = { type = "string", enum = ["ready", "deferred"], description = "状态（可选）" }
+
+[tools.delete_research_task]
+description = '''删除一条未打开的本书资料任务。'''
+examples = [ { task = 1 } ]
+[tools.delete_research_task.input_schema]
+type = "object"
+additionalProperties = false
+required = ["task"]
+properties.task = { type = "integer", description = "任务编号" }
+
+[tools.add_knowledge_entry]
+description = '''向本书可见的知识范围添加一条手工来源的知识条目。'''
+examples = [ { scope = "宋代社会", title = "宋代茶楼", content = "茶楼通常在……" } ]
+[tools.add_knowledge_entry.input_schema]
+type = "object"
+additionalProperties = false
+required = ["scope", "title", "content"]
+properties.scope = { type = "string", description = "知识范围名称" }
+properties.title = { type = "string", description = "条目标题" }
+properties.content = { type = "string", description = "条目内容" }
+properties.source_urls = { type = "array", description = "来源链接（可选）", items = { type = "string", description = "URL" } }
+properties.tags = { type = "array", description = "标签（可选）", items = { type = "string", description = "标签" } }
+
+[tools.start_session]
+description = '''启动一个详细细纲、维护、重新同步、资料或知识检查会话；不能启动写作、修订或审阅。'''
+examples = [ { action = "outline", chapter = "12", guidance = "重点写雨夜" } ]
+[tools.start_session.input_schema]
+type = "object"
+additionalProperties = false
+required = ["action"]
+properties.action = { type = "string", enum = ["outline", "maintain", "resync", "research", "knowledge_check"], description = "要启动的会话类型" }
+properties.chapter = { type = "string", description = "章节（可选）" }
+properties.task = { type = "integer", description = "资料任务编号（research 时必填）" }
+properties.guidance = { type = "string", description = "写作/检查提示（可选）" }

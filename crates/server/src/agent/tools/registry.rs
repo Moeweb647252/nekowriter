@@ -296,7 +296,9 @@ pub fn system_of_tool(tool: &str) -> Option<CanonSystem> {
         "list_foreshadowing" | "add_foreshadowing" | "resolve_foreshadowing" => {
             Some(CanonSystem::Foreshadowing)
         }
-        "propose_goal_change" => Some(CanonSystem::Goals),
+        "list_goals" | "create_goal" | "update_goal" | "propose_goal_change" => {
+            Some(CanonSystem::Goals)
+        }
         _ => None,
     }
 }
@@ -324,6 +326,23 @@ pub fn tools_for_session(
     preparation: bool,
     registry: &ToolRegistry,
 ) -> Vec<&'static str> {
+    // The book agent freezes the full fixed list even while 21.5's action handlers are still
+    // landing; the registry filter below would silently shrink the model's contract. Its switch
+    // rules are the plan §3.3 table, including the two tools that survive until all four canon
+    // systems are off.
+    if role == "assistant" {
+        let all_canon_off =
+            !systems.entities && !systems.timeline && !systems.memory && !systems.foreshadowing;
+        return ASSISTANT_TOOLS
+            .iter()
+            .copied()
+            .filter(|tool| match *tool {
+                "search_canon" | "delete_canon_record" => !all_canon_off,
+                _ => system_of_tool(tool)
+                    .is_none_or(|system| tool_enabled(tool, systems).then_some(system).is_some()),
+            })
+            .collect();
+    }
     let role_tools: &[&str] = if role == "researcher" {
         if preparation {
             &RESEARCH_CHECK_TOOLS
@@ -490,6 +509,10 @@ impl ToolRegistry {
         }
         // The researcher's write tools (spec/05 §8): target-scope only.
         for handler in super::research::all() {
+            handlers.insert(handler.name().to_owned(), handler);
+        }
+        // The book agent's read tools (M21 21.4).
+        for handler in super::assistant::all() {
             handlers.insert(handler.name().to_owned(), handler);
         }
         // The conception tools of M9 (spec/05 §7).

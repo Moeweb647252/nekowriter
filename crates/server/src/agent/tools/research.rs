@@ -469,15 +469,35 @@ impl ToolHandler for UpdateKnowledgeEntryTool {
         _prepared: Prepared,
     ) -> Result<ToolOutcome, ToolError> {
         let input: UpdateEntryInput = decode(input)?;
-        let (scope_id, scope_name) = target_scope(ctx, "update_knowledge_entry").await?;
-        ensure_target_scope_visible(ctx, scope_id, &scope_name).await?;
-        // The target scope only: an entry of another scope is invisible, not merely read-only.
-        let existing = knowledge_entries::Entity::find_by_id(input.entry_id)
-            .filter(knowledge_entries::COLUMN.scope_id.eq(scope_id))
-            .one(ctx.tx)
-            .await
-            .map_err(|_| internal())?
-            .ok_or_else(|| not_found(ctx.prompts, "knowledge_entry", input.entry_id))?;
+        // The researcher edits only its target scope. The book agent may edit any entry in a
+        // scope the book can see (B10/B11, D-169); its session has no research task and therefore
+        // must not go through `target_scope`.
+        let (existing, scope_name) = if ctx.kind() == crate::db::json::SessionKind::BookAgent {
+            let book_id = ctx.book.map(|book| book.id).ok_or_else(internal)?;
+            let visible = knowledge::book_scopes(ctx.tx, book_id)
+                .await
+                .map_err(|_| internal())?;
+            let existing = knowledge_entries::Entity::find_by_id(input.entry_id)
+                .one(ctx.tx)
+                .await
+                .map_err(|_| internal())?
+                .ok_or_else(|| not_found(ctx.prompts, "knowledge_entry", input.entry_id))?;
+            let scope = visible
+                .iter()
+                .find(|scope| scope.id == existing.scope_id)
+                .ok_or_else(|| not_found(ctx.prompts, "knowledge_entry", input.entry_id))?;
+            (existing, scope.name.clone())
+        } else {
+            let (scope_id, scope_name) = target_scope(ctx, "update_knowledge_entry").await?;
+            ensure_target_scope_visible(ctx, scope_id, &scope_name).await?;
+            let existing = knowledge_entries::Entity::find_by_id(input.entry_id)
+                .filter(knowledge_entries::COLUMN.scope_id.eq(scope_id))
+                .one(ctx.tx)
+                .await
+                .map_err(|_| internal())?
+                .ok_or_else(|| not_found(ctx.prompts, "knowledge_entry", input.entry_id))?;
+            (existing, scope_name)
+        };
 
         // `content` and `edits` are mutually exclusive (spec/05 §8).
         if input.content.is_some() && input.edits.is_some() {

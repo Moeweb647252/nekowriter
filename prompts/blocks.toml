@@ -320,7 +320,8 @@ text = '''
 {% endfor %}
 人物设计（最多列出 30 位）：
 {% for character in index.characters %}- #{{ character.rank }} {{ character.name }}（{{ character.role_label }}）
-{% endfor %}
+{% endfor %}{% if index.characters_omitted %}（另有 {{ index.characters_omitted }} 位未列出。）
+{% endif %}
 档案统计：实体 {{ index.canon.entities }}，时间线 {{ index.canon.timeline }}，记忆 {{ index.canon.memory }}，伏笔 {{ index.canon.foreshadowing }}，目标 {{ index.canon.goals }}。
 目标：未完成 {{ index.goals.open }}，可推进 {{ index.goals.ready }}。
 资料任务：
@@ -328,10 +329,12 @@ text = '''
 {% endfor %}
 打开中的会话：
 {% for session in index.sessions %}- #{{ session.id }} {{ session.kind }}（{{ session.status }}）
-{% endfor %}
+{% endfor %}{% if index.sessions_omitted %}（另有 {{ index.sessions_omitted }} 个未列出。）
+{% endif %}
 待处理提案：
 {% for proposal in index.proposals %}- #{{ proposal.id }} {{ proposal.target_type }}{% if proposal.target_kind %} / {{ proposal.target_kind }}{% endif %}
-{% endfor %}
+{% endfor %}{% if index.proposals_omitted %}（另有 {{ index.proposals_omitted }} 个未列出。）
+{% endif %}
 {% if index.off_systems %}已关闭的档案系统：{{ index.off_systems | join("、") }}。
 {% endif %}
 '''

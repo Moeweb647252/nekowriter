@@ -7,6 +7,7 @@
 //! rendered from `prompts/results.toml` — code never writes model-facing text.
 
 pub mod archivist;
+pub mod assistant;
 pub mod conception;
 pub mod goal_proposals;
 pub mod proposals;
@@ -24,7 +25,7 @@ pub mod writer;
 use std::collections::BTreeMap;
 
 use serde::Serialize;
-use serde_json::Value;
+use serde_json::{Value, json};
 
 use crate::db::entities::{agent_sessions, books, chapters, tracks};
 use crate::db::json::{AwaitInputKind, CanonMode, PendingContent, RequestMeta, ToolEffects};
@@ -35,7 +36,7 @@ pub use registry::{
     ARCHIVIST_TOOLS, ASSISTANT_ACTION_TOOLS, ASSISTANT_TOOLS, CONCEPTION_TOOLS, DEBUG_TOOLS,
     RESEARCHER_TOOLS, RETRIEVAL_TOOLS, REVIEWER_TOOLS, ToolRegistry, WRITE_TOOLS, WRITER_TOOLS,
     allowed_tools, initial_phase, is_permitted, is_write_tool, phase_label, role_of_kind,
-    tools_for_role,
+    tools_for_role, tools_for_session,
 };
 pub use resolve::EntityResolver;
 pub use spec::{ToolSpec, ToolSpecs, validate_input};
@@ -489,8 +490,16 @@ pub trait ToolHandler: Send + Sync {
     /// A read-only preview of an action tool's effect, used before a review-mode book-agent
     /// approval hold (spec/03 §5.2, D-169). The default means "no preview implemented"; the
     /// action tools added in M21 21.4/21.5 override it.
-    async fn preview(&self, _ctx: &mut ToolCtx<'_>, _input: Value) -> Result<Value, ToolError> {
-        Err(ToolError::new(ToolErrorKind::Internal))
+    async fn preview(&self, _ctx: &mut ToolCtx<'_>, input: Value) -> Result<Value, ToolError> {
+        // The default preview is deliberately generic and read-only. Action tools with a
+        // meaningful before/after pair (the setting tools, and M21 21.5's new actions) override
+        // it; the default keeps the hold safe instead of making an unimplemented preview look
+        // like an internal error.
+        Ok(json!({
+            "kind": "fields",
+            "label": self.name(),
+            "rows": [{ "field": "input", "after": input }],
+        }))
     }
 
     /// Atomic work inside the call's transaction: database reads and writes only, no I/O waits.

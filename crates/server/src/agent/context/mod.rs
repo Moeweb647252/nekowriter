@@ -660,7 +660,7 @@ async fn block_context(
 }
 
 /// The book-agent's capped map of the book (plan §3.2, D-169).
-async fn book_index_context(
+pub(crate) async fn book_index_context(
     conn: &impl ConnectionTrait,
     session: &agent_sessions::Model,
 ) -> Result<Value, AppError> {
@@ -720,6 +720,10 @@ async fn book_index_context(
             })
         })
         .collect::<Vec<_>>();
+    let characters_total = character_designs::Entity::find()
+        .filter(character_designs::COLUMN.book_id.eq(book_id))
+        .count(conn)
+        .await?;
     let characters = character_designs::Entity::find()
         .filter(character_designs::COLUMN.book_id.eq(book_id))
         .order_by_asc(character_designs::COLUMN.rank)
@@ -735,12 +739,13 @@ async fn book_index_context(
             })
         })
         .collect::<Vec<_>>();
+    let systems = session::canon_systems_of(session);
     let canon = json!({
-        "entities": entities::Entity::find().filter(entities::COLUMN.book_id.eq(book_id)).count(conn).await?,
-        "timeline": crate::db::entities::timeline_events::Entity::find().filter(crate::db::entities::timeline_events::COLUMN.book_id.eq(book_id)).count(conn).await?,
-        "memory": crate::db::entities::memory_notes::Entity::find().filter(crate::db::entities::memory_notes::COLUMN.book_id.eq(book_id)).count(conn).await?,
-        "foreshadowing": crate::db::entities::foreshadowing::Entity::find().filter(crate::db::entities::foreshadowing::COLUMN.book_id.eq(book_id)).count(conn).await?,
-        "goals": crate::db::entities::goal_nodes::Entity::find().filter(crate::db::entities::goal_nodes::COLUMN.book_id.eq(book_id)).count(conn).await?,
+        "entities": if systems.entities { entities::Entity::find().filter(entities::COLUMN.book_id.eq(book_id)).count(conn).await? } else { 0 },
+        "timeline": if systems.timeline { crate::db::entities::timeline_events::Entity::find().filter(crate::db::entities::timeline_events::COLUMN.book_id.eq(book_id)).count(conn).await? } else { 0 },
+        "memory": if systems.memory { crate::db::entities::memory_notes::Entity::find().filter(crate::db::entities::memory_notes::COLUMN.book_id.eq(book_id)).count(conn).await? } else { 0 },
+        "foreshadowing": if systems.foreshadowing { crate::db::entities::foreshadowing::Entity::find().filter(crate::db::entities::foreshadowing::COLUMN.book_id.eq(book_id)).filter(crate::db::entities::foreshadowing::COLUMN.status.eq(crate::db::json::ForeshadowingStatus::Open)).count(conn).await? } else { 0 },
+        "goals": if systems.goals { crate::db::entities::goal_nodes::Entity::find().filter(crate::db::entities::goal_nodes::COLUMN.book_id.eq(book_id)).count(conn).await? } else { 0 },
     });
     let goals = crate::db::entities::goal_nodes::Entity::find()
         .filter(crate::db::entities::goal_nodes::COLUMN.book_id.eq(book_id))
@@ -755,6 +760,9 @@ async fn book_index_context(
             )
         })
         .count();
+    let ready_goals = crate::services::books::ready_goal_count(conn, book_id)
+        .await
+        .map_err(|_| AppError::internal("ready goal count"))?;
     let research = research_tasks::Entity::find()
         .filter(research_tasks::COLUMN.book_id.eq(book_id))
         .all(conn)
@@ -765,6 +773,15 @@ async fn book_index_context(
             .entry(task.status.as_str().to_owned())
             .or_insert(0_i64) += 1;
     }
+    let sessions_total = agent_sessions::Entity::find()
+        .filter(agent_sessions::COLUMN.book_id.eq(book_id))
+        .filter(
+            agent_sessions::COLUMN
+                .status
+                .is_in(crate::services::sessions::open_statuses()),
+        )
+        .count(conn)
+        .await?;
     let sessions = agent_sessions::Entity::find()
         .filter(agent_sessions::COLUMN.book_id.eq(book_id))
         .filter(
@@ -786,6 +803,19 @@ async fn book_index_context(
             })
         })
         .collect::<Vec<_>>();
+    let proposals_total = crate::db::entities::setting_proposals::Entity::find()
+        .filter(
+            crate::db::entities::setting_proposals::COLUMN
+                .book_id
+                .eq(book_id),
+        )
+        .filter(
+            crate::db::entities::setting_proposals::COLUMN
+                .status
+                .eq(crate::db::json::ProposalStatus::Pending),
+        )
+        .count(conn)
+        .await?;
     let proposals = crate::db::entities::setting_proposals::Entity::find()
         .filter(
             crate::db::entities::setting_proposals::COLUMN
@@ -810,7 +840,6 @@ async fn book_index_context(
             })
         })
         .collect::<Vec<_>>();
-    let systems = session::canon_systems_of(session);
     let mut off_systems = Vec::new();
     if !systems.entities {
         off_systems.push("entities");
@@ -833,11 +862,14 @@ async fn book_index_context(
         "chapters_omitted": total_chapters.saturating_sub(chapter_rows.len()),
         "setting_docs": docs,
         "characters": characters,
+        "characters_omitted": characters_total.saturating_sub(30),
         "canon": canon,
-        "goals": {"open": open_goals, "ready": 0},
+        "goals": {"open": open_goals, "ready": ready_goals},
         "research": research_counts.into_iter().map(|(status, count)| json!({"status": status, "count": count})).collect::<Vec<_>>(),
         "sessions": sessions,
+        "sessions_omitted": sessions_total.saturating_sub(30),
         "proposals": proposals,
+        "proposals_omitted": proposals_total.saturating_sub(20),
         "off_systems": off_systems,
     }))
 }

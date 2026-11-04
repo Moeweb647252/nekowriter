@@ -2174,8 +2174,33 @@ move_after、move_before 不能同时提供，请只用其中一个。
 ===== result.change_declined [0] =====
 修改未应用：作者没有批准这次修改，并留下了意见。请阅读作者的意见后再决定下一步；不要原样重复被拒绝的修改。
 
+===== result.chapter_view [0] =====
+第1章（text）
+状态：drafting · 版本：1 · 档案：synced · 320 字
+第一章正文
+
+===== result.setting_doc_view [0] =====
+第1章（revision 1）
+# 设定文档
+
+===== result.characters_view [0] =====
+#1 林凡（主角）## 身份
+弟子
+
+===== result.goal_list [0] =====
+#1 [goal] 目标 — 目的（active）
+
+===== result.research_list [0] =====
+#1 [topic] 主题 · 范围 · ready · 0 条
+
+===== result.session_list [0] =====
+#1 book_agent · idle · 2026-01-01T00:00:00Z
+
 ===== tool.add_foreshadowing [0] =====
 记录正文中新埋下的伏笔。
+
+===== tool.add_knowledge_entry [0] =====
+向本书可见的知识范围添加一条手工来源的知识条目。
 
 ===== tool.add_memory_note [0] =====
 记录正文确立的事实（fact）或世界规则（world_rule），供后续章节保持一致。例如“林凡的玉佩是母亲的遗物”“筑基之前无法御剑飞行”。
@@ -2186,11 +2211,35 @@ move_after、move_before 不能同时提供，请只用其中一个。
 ===== tool.ask_user [0] =====
 向作者提出 1 到 4 个问题，等待作者回答。尽量给出具体选项，同时允许作者自由回答。用于确认构思中的关键空白。
 
+===== tool.book_overview [0] =====
+查看全书索引：轨道与章节、设定文档、人物设计、档案与目标统计、资料任务、打开中的会话与待处理提案。
+
+===== tool.create_chapter [0] =====
+在轨道末尾创建一个 planned 章节。
+
 ===== tool.create_entity [0] =====
 创建一个新实体（人物、组织、地点、物品等）。创建前先确认它不存在；已有的实体请用 update_entity。description 只写稳定档案，控制在约 120 字以内；当前处境与单项事实分别写 state 与 attributes。
 
+===== tool.create_goal [0] =====
+创建一个共享目标节点，遵循目标树规则。
+
+===== tool.create_research_task [0] =====
+为本书创建一个 ready 的资料主题任务，作者身份。
+
+===== tool.delete_canon_record [0] =====
+删除一条共享档案记录（实体、关系、时间线、记忆或伏笔），写入变更日志以便恢复。
+
 ===== tool.delete_paragraphs [0] =====
 删除一个或多个段落。
+
+===== tool.delete_research_task [0] =====
+删除一条未打开的本书资料任务。
+
+===== tool.edit_chapter [0] =====
+修改章节标题、写作提示、细纲或参考要点；细纲与参考要点二选一，find 必须恰好匹配一次。
+
+===== tool.edit_chapter_text [0] =====
+按 find/replace 修改章节正文；每一处 find 必须恰好匹配一次，按顺序应用。
 
 ===== tool.edit_setting_doc [0] =====
 局部修改一份设定文档：逐处替换文字。所有替换一起生效，任何一处失败则都不生效。
@@ -2228,6 +2277,18 @@ move_after、move_before 不能同时提供，请只用其中一个。
 ===== tool.list_foreshadowing [0] =====
 列出伏笔（默认列出未回收的伏笔），可以按实体筛选。规划情节、考虑呼应或回收伏笔时使用。
 
+===== tool.list_goals [0] =====
+列出本书共享范围的目标节点，可按状态或层级筛选；包含可推进标记。
+
+===== tool.list_research [0] =====
+列出本书的资料任务，可按状态筛选。
+
+===== tool.list_sessions [0] =====
+列出本书的会话，默认列出打开中的会话；可按状态和类型筛选。
+
+===== tool.open_chapter [0] =====
+读取任意轨道、任意状态的章节。part 选择正文、细纲、参考要点、写作提示或摘要；正文可按段落继续阅读。
+
 ===== tool.propose_goal_change [0] =====
 对本书的写作目标提出修改建议（由作者决定是否采纳）。complete 表示某个目标在本章已经达成；drop 表示某个目标已无法达成；create 表示在本章打开了新的任务机会。只在写作目标块存在相关节点时使用。
 
@@ -2240,11 +2301,17 @@ move_after、move_before 不能同时提供，请只用其中一个。
 ===== tool.read_chapter [0] =====
 阅读一个已定稿章节的原文（带段落编号）。需要完整回顾某一章时使用。
 
+===== tool.read_characters [0] =====
+列出人物设计，按重要性排序；指定 name 时读取该人物的完整设计。
+
 ===== tool.read_draft [0] =====
 查看本章当前的草稿（带段落编号）。修改已写内容之前，或作者改动较多时使用。
 
 ===== tool.read_knowledge_entry [0] =====
 阅读一个知识条目的全文。检索结果的摘录不够用时使用。
+
+===== tool.read_setting_doc [0] =====
+按偏移读取一份设定文档，每次最多 12,000 字。需要分段阅读大纲、世界观或主角设定时使用。
 
 ===== tool.record_appearances [0] =====
 记录本章出场或被提及的全部实体（会替换本章已有的出场记录，请提供完整列表）。
@@ -2294,6 +2361,9 @@ move_after、move_before 不能同时提供，请只用其中一个。
 ===== tool.set_target_scope [0] =====
 选择知识检查要写入的知识范围。优先使用同主题的现有范围；没有合适的范围时，用 description 新建一个范围。作者排除的范围不能使用。
 
+===== tool.start_session [0] =====
+启动一个详细细纲、维护、重新同步、资料或知识检查会话；不能启动写作、修订或审阅。
+
 ===== tool.submit_outline [0] =====
 【细纲任务】提交本章的详细细纲与参考要点。细纲在作者接受后生效（作者可以关闭确认），提交后本次任务结束。
 
@@ -2306,8 +2376,14 @@ move_after、move_before 不能同时提供，请只用其中一个。
 ===== tool.update_entity [0] =====
 更新已有实体：状态、属性、描述、别名、重要度或生死状态。note 必须写明这次变化。描述只补长期成立的内容，整体保持约 120 字以内；本章的进展写入 state、attributes、add_memory_note 与 add_timeline_event。
 
+===== tool.update_goal [0] =====
+修改一个共享目标节点，可提交状态和局部字段。
+
 ===== tool.update_knowledge_entry [0] =====
 补充或修改目标知识范围中已有的条目。
+
+===== tool.update_research_task [0] =====
+修改资料任务；可编辑主题、要求、范围或改为 deferred/ready。
 
 ===== tool.update_timeline_event [0] =====
 修改时间线事件的内容，或调整它在时间线上的位置。

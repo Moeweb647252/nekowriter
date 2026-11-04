@@ -35,7 +35,8 @@ VALUES
   (8, 1, 'archivist',   'canon_seed',          NULL, 1,    NULL, '{}', '', '[]', 'completed', 'none', NULL, 0, 0, 0, NULL, '{}', '{}', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z'),
   (9, 1, 'archivist',   'chapter_resync',      1,    1,    NULL, '{}', '', '[]', 'failed',    'none', NULL, 0, 0, 0, NULL, '{}', '{}', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z'),
   (10, 1, 'writer',     'chapter_write',       1,    1,    NULL, '{}', '', '[]', 'completed', 'drafting', 'paragraph', 0, 0, 0, NULL, '{}', '{}', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z'),
-  (11, 1, 'writer',     'chapter_write',       1,    1,    NULL, '{}', '', '[]', 'running',   'drafting', 'paragraph', 0, 0, 0, NULL, '{}', '{}', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z');
+  (11, 1, 'writer',     'chapter_write',       1,    1,    NULL, '{}', '', '[]', 'running',   'drafting', 'paragraph', 0, 0, 0, NULL, '{}', '{}', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z'),
+  (12, 1, 'writer',     'chapter_write',       1,    1,    NULL, '{}', '', '[]', 'idle',      'none', 'paragraph', 0, 0, 0, NULL, '{}', '{}', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z');
 UPDATE agent_sessions SET parent_session_id = 10 WHERE id = 11;
 
 INSERT INTO agent_messages(id, session_id, seq, role, kind, content, created_at)
@@ -436,6 +437,10 @@ async fn old_role_models_load_without_assistant() {
 async fn a_lost_referencing_row_fails_the_per_table_count_guard() {
     let sql = include_str!("../../migration/src/sql/0012_book_agent.sql");
     let cases = [
+        (
+            "agent_sessions",
+            "DELETE FROM agent_sessions WHERE id = 12;",
+        ),
         ("agent_messages", "DELETE FROM agent_messages WHERE id = 3;"),
         (
             "agent_tool_calls",

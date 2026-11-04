@@ -470,3 +470,84 @@ title_zh = "结果 · 修改被拒绝"
 text = '''
 修改未应用：作者没有批准这次修改，并留下了意见。请阅读作者的意见后再决定下一步；不要原样重复被拒绝的修改。
 '''
+
+[[prompt]]
+key = "result.chapter_view"
+kind = "result"
+agent = "assistant"
+vars = ["label", "part", "body", "next_pid", "status", "content_version", "canon_status", "words", "open_sessions"]
+title_en = "Result — chapter view"
+title_zh = "结果 · 章节视图"
+text = '''
+{{ label }}（{{ part }}）
+状态：{{ status }} · 版本：{{ content_version }} · 档案：{{ canon_status }} · {{ words }} 字
+{{ body }}
+{% if next_pid %}（没有显示完，继续阅读请使用 from_pid="{{ next_pid }}"。）{% endif %}
+{% if open_sessions %}打开中的会话：{% for session in open_sessions %}#{{ session.id }} {{ session.kind }}（{{ session.status }}）{% endfor %}{% endif %}
+'''
+
+[[prompt]]
+key = "result.setting_doc_view"
+kind = "result"
+agent = "assistant"
+vars = ["label", "content", "offset", "end", "total", "next_offset", "revision"]
+title_en = "Result — setting document view"
+title_zh = "结果 · 设定文档"
+text = '''
+{{ label }}（revision {{ revision }}）
+{{ content }}
+{% if next_offset is not none %}（第 {{ offset }}–{{ end }} 字，共 {{ total }} 字。继续阅读请使用 offset={{ next_offset }}。）{% endif %}
+'''
+
+[[prompt]]
+key = "result.characters_view"
+kind = "result"
+agent = "assistant"
+vars = ["designs"]
+title_en = "Result — characters view"
+title_zh = "结果 · 人物设计"
+text = '''
+{% for design in designs %}#{{ design.rank }} {{ design.name }}（{{ design.role_label }}）{% if design.entity_id %} · 实体 #{{ design.entity_id }}{% endif %}{% if design.summary %}：{{ design.summary }}{% endif %}{% if design.profile %}
+{{ design.profile }}{% endif %}
+{% else %}（没有人物设计）
+{% endfor %}
+'''
+
+[[prompt]]
+key = "result.goal_list"
+kind = "result"
+agent = "assistant"
+vars = ["nodes"]
+title_en = "Result — goals"
+title_zh = "结果 · 目标列表"
+text = '''
+{% for node in nodes %}#{{ node.id }} [{{ node.level }}] {{ node.title }} — {{ node.purpose }}（{{ node.status }}{% if node.chapter_from is not none %}，第{{ node.chapter_from }}章{% endif %}{% if node.chapter_to is not none %}–第{{ node.chapter_to }}章{% endif %}）
+{% else %}（没有目标节点）
+{% endfor %}
+'''
+
+[[prompt]]
+key = "result.research_list"
+kind = "result"
+agent = "assistant"
+vars = ["tasks"]
+title_en = "Result — research tasks"
+title_zh = "结果 · 资料任务"
+text = '''
+{% for task in tasks %}#{{ task.id }} [{{ task.kind }}] {{ task.topic }} · {{ task.scope }} · {{ task.status }} · {{ task.entries }} 条
+{% else %}（没有资料任务）
+{% endfor %}
+'''
+
+[[prompt]]
+key = "result.session_list"
+kind = "result"
+agent = "assistant"
+vars = ["sessions"]
+title_en = "Result — sessions"
+title_zh = "结果 · 会话列表"
+text = '''
+{% for session in sessions %}#{{ session.id }} {{ session.kind }}{% if session.chapter_id %} · 章节 #{{ session.chapter_id }}{% endif %} · {{ session.status }} · {{ session.created_at }}
+{% else %}（没有会话）
+{% endfor %}
+'''

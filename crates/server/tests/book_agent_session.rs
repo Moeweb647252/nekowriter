@@ -311,3 +311,144 @@ async fn full_mode_applies_an_action_without_holding() {
         .expect("call");
     assert_eq!(call["status"], "done");
 }
+
+#[tokio::test]
+async fn a_reused_canon_action_holds_in_review_mode_and_writes_after_approval() {
+    let mut app = TestApp::new().await;
+    let _model = setup_models(&app, true).await;
+    let book = app.create_book("Book").await;
+    let book_id = book["id"].as_i64().unwrap() as i32;
+    let _provider = app.set_provider(ScriptedProvider::new(vec![
+        ScriptStep::new().tool(
+            "create_entity",
+            json!({"kind":"character","name":"Held canon","summary":"one"}),
+        ),
+        ScriptStep::new().text("Done."),
+    ]));
+    let (status, body) = start_agent(&app, book_id, json!({"message": "Create a person."})).await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+    let session_id = body["session_id"].as_i64().unwrap();
+    let snapshot = wait_status(&app, session_id, "held").await;
+    let call = snapshot["tool_calls"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|call| call["name"] == "create_entity")
+        .expect("held canon call");
+    assert_eq!(call["status"], "held");
+    let count = app
+        .state()
+        .db()
+        .conn()
+        .query_one_raw(sea_orm::Statement::from_string(
+            sea_orm::DbBackend::Sqlite,
+            format!("SELECT count(*) AS n FROM entities WHERE book_id = {book_id}"),
+        ))
+        .await
+        .unwrap()
+        .unwrap()
+        .try_get::<i64>("", "n")
+        .unwrap();
+    assert_eq!(count, 0, "nothing is written while held");
+
+    let (status, body) = app
+        .post(&format!("/api/sessions/{session_id}/resume"), json!({}))
+        .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let _ = wait_status(&app, session_id, "idle").await;
+    let count = app
+        .state()
+        .db()
+        .conn()
+        .query_one_raw(sea_orm::Statement::from_string(
+            sea_orm::DbBackend::Sqlite,
+            format!("SELECT count(*) AS n FROM entities WHERE book_id = {book_id}"),
+        ))
+        .await
+        .unwrap()
+        .unwrap()
+        .try_get::<i64>("", "n")
+        .unwrap();
+    assert_eq!(count, 1, "approval applies the canon write");
+}
+
+#[tokio::test]
+async fn end_accepts_every_documented_status_and_rejects_running_and_other_kinds() {
+    let app = TestApp::new().await;
+    let _model = setup_models(&app, true).await;
+    let book = app.create_book("Book").await;
+    let book_id = book["id"].as_i64().unwrap() as i32;
+    let snapshot = r#"{"provider_id":0,"protocol":"mock","base_url":"","extra_headers":{},"model":"","context_window":0,"max_output_tokens":0,"options":null}"#;
+    for (id, status) in [
+        (101, "idle"),
+        (102, "held"),
+        (103, "paused"),
+        (104, "stopped"),
+        (105, "failed"),
+        (106, "interrupted"),
+    ] {
+        app.execute(&format!(
+            "INSERT INTO agent_sessions(id, book_id, role, kind, model_snapshot, system_prompt, tools, status, write_mode, created_at, updated_at) \
+             VALUES ({id}, {book_id}, 'assistant', 'book_agent', '{snapshot}', '', '[]', '{status}', 'review', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')"
+        )).await;
+        let (code, body) = app
+            .post(&format!("/api/sessions/{id}/end"), json!({}))
+            .await;
+        assert_eq!(code, StatusCode::OK, "{status}: {body}");
+        assert_eq!(body["status"], "completed", "{status}");
+    }
+    app.execute(&format!(
+        "INSERT INTO agent_sessions(id, book_id, role, kind, model_snapshot, system_prompt, tools, status, write_mode, created_at, updated_at) \
+         VALUES (107, {book_id}, 'assistant', 'book_agent', '{snapshot}', '', '[]', 'running', 'review', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')"
+    )).await;
+    let (code, body) = app.post("/api/sessions/107/end", json!({})).await;
+    assert_eq!(code, StatusCode::CONFLICT, "{body}");
+    app.execute(&format!(
+        "INSERT INTO agent_sessions(id, book_id, role, kind, model_snapshot, system_prompt, tools, status, created_at, updated_at) \
+         VALUES (108, {book_id}, 'writer', 'chapter_write', '{snapshot}', '', '[]', 'idle', '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')"
+    )).await;
+    let (code, body) = app.post("/api/sessions/108/end", json!({})).await;
+    assert_eq!(code, StatusCode::CONFLICT, "{body}");
+}
+
+#[tokio::test]
+async fn archived_books_start_and_conceiving_books_are_refused() {
+    let mut app = TestApp::new().await;
+    let _model = setup_models(&app, true).await;
+    let _provider = app.set_provider(ScriptedProvider::new(vec![ScriptStep::new().text("ok")]));
+    let book = app.create_book("Book").await;
+    let book_id = book["id"].as_i64().unwrap() as i32;
+    app.execute(&format!(
+        "UPDATE books SET status = 'archived' WHERE id = {book_id}"
+    ))
+    .await;
+    let (code, body) = start_agent(&app, book_id, json!({"message": "hi"})).await;
+    assert_eq!(code, StatusCode::CREATED, "{body}");
+    app.execute(&format!(
+        "UPDATE books SET status = 'conceiving' WHERE id = {book_id}"
+    ))
+    .await;
+    let (code, body) = start_agent(&app, book_id, json!({"message": "hi"})).await;
+    assert_eq!(code, StatusCode::CONFLICT, "{body}");
+    assert_eq!(body["error"]["code"], "book.invalid_state");
+}
+
+#[tokio::test]
+async fn message_boundary_and_missing_model_are_checked() {
+    let mut app = TestApp::new().await;
+    let _model = setup_models(&app, true).await;
+    let _provider = app.set_provider(ScriptedProvider::new(vec![ScriptStep::new().text("ok")]));
+    let book = app.create_book("Book").await;
+    let book_id = book["id"].as_i64().unwrap() as i32;
+    let (status, body) = start_agent(&app, book_id, json!({"message": "x".repeat(20_000)})).await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+    let (status, body) = start_agent(&app, book_id, json!({"message": "x".repeat(20_001)})).await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{body}");
+
+    let no_model = TestApp::new().await;
+    let book = no_model.create_book("No model").await;
+    let book_id = book["id"].as_i64().unwrap() as i32;
+    let (status, body) = start_agent(&no_model, book_id, json!({"message": "hi"})).await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    assert_eq!(body["error"]["code"], "model.missing_role", "{body}");
+}
