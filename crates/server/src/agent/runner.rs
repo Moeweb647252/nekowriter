@@ -746,6 +746,7 @@ async fn persist_assistant(
                 blocks.push(StoredBlock::Text {
                     text: turn.text.clone(),
                     cache: None,
+                    source: None,
                 });
             }
             for call in &turn.tool_calls {
@@ -2201,12 +2202,15 @@ pub async fn seal_inner(
     } else if report.is_some() || !items.is_empty() {
         // The batch was sealed by a request that never finished: the report and the inbox
         // become one new user message (spec/03 §5.3, D-035).
-        let mut sections = Vec::new();
+        let mut sections: Vec<(String, String)> = Vec::new();
         if let Some(report) = &report {
-            sections.push(report.clone());
+            sections.push(("edit_report".to_owned(), report.clone()));
         }
         for item in &items {
-            sections.push(inbox_item_text(prompts, item));
+            sections.push((
+                format!("inbox.{}", item.kind.as_str()),
+                inbox_item_text(prompts, item),
+            ));
         }
         let author = items
             .iter()
@@ -2239,13 +2243,14 @@ pub async fn seal_inner(
 }
 
 /// Turns rendered sections into text blocks, dropping empty ones.
-pub fn text_blocks(sections: &[String]) -> Vec<StoredBlock> {
+pub fn text_blocks(sections: &[(String, String)]) -> Vec<StoredBlock> {
     sections
         .iter()
-        .filter(|section| !section.trim().is_empty())
-        .map(|section| StoredBlock::Text {
+        .filter(|(_, section)| !section.trim().is_empty())
+        .map(|(source, section)| StoredBlock::Text {
             text: section.clone(),
             cache: None,
+            source: Some(source.clone()),
         })
         .collect()
 }
@@ -2383,12 +2388,15 @@ pub async fn text_only_inner(
     let report = edit_report_text(tx, session, prompts).await?;
     let items = pending_inbox_rows(tx, session.id).await?;
     if report.is_some() || !items.is_empty() {
-        let mut sections = Vec::new();
+        let mut sections: Vec<(String, String)> = Vec::new();
         if let Some(report) = &report {
-            sections.push(report.clone());
+            sections.push(("edit_report".to_owned(), report.clone()));
         }
         for item in &items {
-            sections.push(inbox_item_text(prompts, item));
+            sections.push((
+                format!("inbox.{}", item.kind.as_str()),
+                inbox_item_text(prompts, item),
+            ));
         }
         let author = items
             .iter()
@@ -2456,6 +2464,7 @@ pub async fn text_only_inner(
                     vec![StoredBlock::Text {
                         text: rendered.text,
                         cache: None,
+                        source: None,
                     }],
                 )
                 .await?;
@@ -2519,15 +2528,18 @@ fn nudge_key(kind: SessionKind, phase: Phase) -> &'static str {
 
 // ───────────────────────────── rollover check ─────────────────────────────
 
-/// True when the next request would overflow the context window (spec/03 §9).
-pub fn rollover_needed(session: &agent_sessions::Model) -> bool {
-    // Eligibility first: only a writer that is drafting or revising rolls over (spec/03 §9).
-    let eligible = matches!(
+/// True when the session's current kind and phase may roll over (spec/03 §9).
+pub fn rollover_eligible(session: &agent_sessions::Model) -> bool {
+    matches!(
         (session::kind_of(session), session::phase_of(session)),
         (SessionKind::ChapterWrite, Phase::Drafting)
             | (SessionKind::ChapterRevise, Phase::Revising)
-    );
-    if !eligible {
+    )
+}
+
+/// True when the next request would overflow the context window (spec/03 §9).
+pub fn rollover_needed(session: &agent_sessions::Model) -> bool {
+    if !rollover_eligible(session) {
         return false;
     }
     // The previous request failed with a context overflow: the next step rolls over even when the
@@ -2780,5 +2792,34 @@ mod tests {
             &topic_snapshot("agent write"),
         ));
         assert_eq!(snapshot, topic_snapshot("agent write"));
+    }
+}
+
+#[cfg(test)]
+mod source_tests {
+    use super::*;
+
+    #[test]
+    fn text_blocks_keep_their_sources_and_drop_empty_sections() {
+        let blocks = text_blocks(&[
+            ("edit_report".to_owned(), "report".to_owned()),
+            ("inbox.notice".to_owned(), "notice text".to_owned()),
+            ("inbox.user_message".to_owned(), "hello".to_owned()),
+        ]);
+        let pairs: Vec<(Option<String>, String)> = blocks
+            .into_iter()
+            .map(|block| match block {
+                StoredBlock::Text { source, text, .. } => (source, text),
+                _ => panic!("text_blocks returns text blocks"),
+            })
+            .collect();
+        assert_eq!(
+            pairs,
+            vec![
+                (Some("edit_report".to_owned()), "report".to_owned()),
+                (Some("inbox.notice".to_owned()), "notice text".to_owned()),
+                (Some("inbox.user_message".to_owned()), "hello".to_owned()),
+            ]
+        );
     }
 }

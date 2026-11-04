@@ -439,5 +439,87 @@
     "end_held_body": "The held change will not be applied. The conversation closes and its messages stay in the history.",
     "end_confirm": "End conversation",
     "conceiving_disabled": "Start a conversation after the conception is finalized."
+  },
+  "context": {
+    "title": "Context",
+    "button": "Context",
+    "empty": "No context data yet",
+    "header": {
+      "tokens": "{{estimate}} tokens · {{percent}}% of {{window}}",
+      "provider": "Provider count",
+      "scaled": "Estimate, scaled to the provider's last count",
+      "estimate": "Estimate",
+      "cached": "Cached {{tokens}}",
+      "pending": "{{count}} tool calls have no result yet and are not counted"
+    },
+    "strip": {
+      "current": "Current",
+      "step": "Step {{seq}} · {{tokens}} tokens",
+      "renews": "Renews here",
+      "aria_step": "Step {{seq}} of {{count}}, {{tokens}} tokens",
+      "aria_current": "Current of {{count}}, {{tokens}} tokens"
+    },
+    "toggle": {
+      "treemap": "Treemap",
+      "list": "List"
+    },
+    "breadcrumb": {
+      "root": "Context"
+    },
+    "legend": {
+      "setup": "Setup: system prompt, tools, kickoff",
+      "messages": "Messages: author, runtime",
+      "work": "Work: model, results"
+    },
+    "list": {
+      "name": "Name",
+      "tokens": "≈ Tokens",
+      "share": "Share",
+      "more": "{{count}} more"
+    },
+    "group": {
+      "system": "System prompt",
+      "tools": "Tools",
+      "kickoff": "Kickoff",
+      "author": "From the author",
+      "runtime": "Runtime",
+      "model": "Model output",
+      "results": "Tool results"
+    },
+    "part": {
+      "system_prompt": "System prompt",
+      "tool": "Tool",
+      "block": "Block",
+      "message": "Message",
+      "feedback": "Feedback",
+      "edit_report": "Edit report",
+      "notice": "Notice",
+      "effect_notice": "Effect notice",
+      "nudge": "Nudge",
+      "text": "Text",
+      "reasoning": "Reasoning",
+      "call": "Call",
+      "result": "Result"
+    },
+    "block": {
+      "settings": "Setting materials",
+      "canon_systems": "Canon systems",
+      "writing_skills": "Writing skills",
+      "memory": "Memory",
+      "recent_chapters": "Recent chapters",
+      "goals": "Goals",
+      "chapter_draft": "Chapter draft",
+      "cast_index": "Cast index",
+      "chapter_diff": "Chapter diff",
+      "book_brief": "Book brief",
+      "book_index": "Book index",
+      "first_message": "First message",
+      "task": "Task",
+      "unlabeled": "Block {{number}}"
+    },
+    "tooltip": {
+      "share": "{{share}}%",
+      "tokens": "≈ {{tokens}} tokens"
+    }
   }
 }

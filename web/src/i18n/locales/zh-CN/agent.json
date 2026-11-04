@@ -439,5 +439,87 @@
     "end_held_body": "The held change will not be applied. The conversation closes and its messages stay in the history.",
     "end_confirm": "End conversation",
     "conceiving_disabled": "设定完成后即可开始书籍助手对话。"
+  },
+  "context": {
+    "title": "上下文",
+    "button": "上下文",
+    "empty": "暂无上下文数据",
+    "header": {
+      "tokens": "{{estimate}} tokens · 占 {{window}} 的 {{percent}}%",
+      "provider": "服务商计数",
+      "scaled": "估算，按服务商最近一次计数缩放",
+      "estimate": "估算",
+      "cached": "缓存 {{tokens}}",
+      "pending": "{{count}} 个工具调用尚无结果，未计入"
+    },
+    "strip": {
+      "current": "当前",
+      "step": "第 {{seq}} 步 · {{tokens}} tokens",
+      "renews": "在此续接",
+      "aria_step": "第 {{seq}} 步，共 {{count}} 步，{{tokens}} tokens",
+      "aria_current": "当前，共 {{count}} 步，{{tokens}} tokens"
+    },
+    "toggle": {
+      "treemap": "矩形树图",
+      "list": "列表"
+    },
+    "breadcrumb": {
+      "root": "上下文"
+    },
+    "legend": {
+      "setup": "准备：系统提示、工具、启动块",
+      "messages": "消息：作者、运行时",
+      "work": "工作：模型、工具结果"
+    },
+    "list": {
+      "name": "名称",
+      "tokens": "≈ Tokens",
+      "share": "占比",
+      "more": "另有 {{count}} 项"
+    },
+    "group": {
+      "system": "系统提示",
+      "tools": "工具",
+      "kickoff": "启动块",
+      "author": "来自作者",
+      "runtime": "运行时",
+      "model": "模型输出",
+      "results": "工具结果"
+    },
+    "part": {
+      "system_prompt": "系统提示",
+      "tool": "工具",
+      "block": "块",
+      "message": "消息",
+      "feedback": "反馈",
+      "edit_report": "编辑报告",
+      "notice": "通知",
+      "effect_notice": "效果通知",
+      "nudge": "提醒",
+      "text": "文本",
+      "reasoning": "推理",
+      "call": "调用",
+      "result": "结果"
+    },
+    "block": {
+      "settings": "设定材料",
+      "canon_systems": "设定系统",
+      "writing_skills": "写作技能",
+      "memory": "记忆",
+      "recent_chapters": "最近章节",
+      "goals": "目标",
+      "chapter_draft": "章节草稿",
+      "cast_index": "角色索引",
+      "chapter_diff": "章节差异",
+      "book_brief": "书籍简介",
+      "book_index": "书籍索引",
+      "first_message": "第一条消息",
+      "task": "任务",
+      "unlabeled": "第 {{number}} 块"
+    },
+    "tooltip": {
+      "share": "{{share}}%",
+      "tokens": "≈ {{tokens}} tokens"
+    }
   }
 }

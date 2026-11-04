@@ -20,6 +20,34 @@ type ServerEvent = {
 type Handler = (event: ServerEvent) => void
 
 const handlers = new Set<Handler>()
+
+/**
+ * Rate-limit Context refreshes to one per second per session (plan C11). The first event uses a
+ * leading invalidation; later events in the window schedule one trailing invalidation.
+ */
+const contextLastInvalidated = new Map<number, number>()
+const contextRefreshTimers = new Map<number, ReturnType<typeof setTimeout>>()
+
+function invalidateContextCurrent(queryClient: QueryClient, sessionId: number): void {
+  const now = Date.now()
+  const last = contextLastInvalidated.get(sessionId) ?? 0
+  const remaining = 1000 - (now - last)
+  if (remaining <= 0) {
+    contextLastInvalidated.set(sessionId, now)
+    void queryClient.invalidateQueries({ queryKey: keys.sessions.context(sessionId, null) })
+    return
+  }
+  if (contextRefreshTimers.has(sessionId)) return
+  contextRefreshTimers.set(
+    sessionId,
+    setTimeout(() => {
+      contextRefreshTimers.delete(sessionId)
+      contextLastInvalidated.set(sessionId, Date.now())
+      void queryClient.invalidateQueries({ queryKey: keys.sessions.context(sessionId, null) })
+    }, remaining),
+  )
+}
+
 let source: EventSource | null = null
 let currentBookId: number | null = null
 let hadError = false
@@ -485,6 +513,7 @@ export function applyServerEvent(
       void queryClient.invalidateQueries({
         queryKey: keys.sessions.detail(sessionId),
       })
+      invalidateContextCurrent(queryClient, sessionId)
       return
     }
     case "session.updated":
@@ -498,6 +527,7 @@ export function applyServerEvent(
         void queryClient.invalidateQueries({
           queryKey: keys.sessions.detail(sessionId),
         })
+        invalidateContextCurrent(queryClient, sessionId)
       }
       // The book session list feeds the studio's session choice (and the conception studio's
       // pre-session state): an auto-started conception session must replace that pane without a

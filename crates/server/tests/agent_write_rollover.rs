@@ -322,6 +322,24 @@ async fn only_the_settings_block_of_a_rollover_kickoff_carries_a_cache_flag() {
         vec![Some(true), None, None, None],
         "only `block.settings` carries a cache flag: {flags:?}"
     );
+    let sources: Vec<Option<String>> = messages[0]
+        .blocks()
+        .into_iter()
+        .filter_map(|block| match block {
+            nekowriter::db::json::StoredBlock::Text { source, .. } => Some(source),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        sources,
+        vec![
+            Some("block.settings".to_owned()),
+            Some("block.memory".to_owned()),
+            Some("block.chapter_draft".to_owned()),
+            Some("writer.kickoff.rollover".to_owned()),
+        ],
+        "rollover child blocks carry their prompt keys"
+    );
 }
 
 /// spec/03 §9: `author_notes` holds "the author's earlier feedback and steering messages from the

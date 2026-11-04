@@ -15,6 +15,7 @@
 //! - [`seal`] — the canonical composition of a sealed result (spec/03 §5.3).
 //! - [`completion`] — the domain effects of a completing call (spec/03 §5.4).
 
+pub mod breakdown;
 pub mod completion;
 pub mod context;
 pub mod manager;

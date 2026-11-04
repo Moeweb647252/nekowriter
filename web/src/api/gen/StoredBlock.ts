@@ -7,4 +7,10 @@ export type StoredBlock = { "type": "text", text: string,
 /**
  * Place a cache breakpoint after this block.
  */
-cache?: boolean | null, } | { "type": "reasoning", text: string, } | { "type": "tool_call", call_id: string, name: string, input_text: string, };
+cache?: boolean | null, 
+/**
+ * Where the runtime took this block from (D-171): a kickoff block's prompt key, or
+ * `edit_report` / `inbox.user_message` / `inbox.notice` for an idle delivery's sections.
+ * Display only; never sent to a provider.
+ */
+source?: string | null, } | { "type": "reasoning", text: string, } | { "type": "tool_call", call_id: string, name: string, input_text: string, };

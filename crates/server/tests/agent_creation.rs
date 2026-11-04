@@ -345,6 +345,23 @@ async fn the_kickoff_message_holds_one_block_per_kickoff_block() {
         4,
         "settings · memory · draft · task: {blocks:?}"
     );
+    let sources: Vec<Option<String>> = blocks
+        .iter()
+        .map(|block| match block {
+            nekowriter::db::json::StoredBlock::Text { source, .. } => source.clone(),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        sources,
+        vec![
+            Some("block.settings".to_owned()),
+            Some("block.memory".to_owned()),
+            Some("block.chapter_draft".to_owned()),
+            Some("writer.kickoff.chapter".to_owned()),
+        ],
+        "kickoff blocks carry their prompt keys in order: {blocks:?}"
+    );
     assert!(
         matches!(
             &blocks[0],

@@ -4,6 +4,7 @@ use axum::Json;
 use axum::extract::{Path, Query, State};
 use serde::Deserialize;
 
+use crate::agent::breakdown::ContextBreakdownDto;
 use crate::api::dto::sessions::{
     DebugEchoDto, DebugEchoInput, MessagePageDto, ResumeInput, SessionAnswerInput, SessionDto,
     SessionMessageInput, SessionPatch, SessionSnapshotDto,
@@ -52,6 +53,23 @@ pub async fn get(
 ) -> AppResult<Json<SessionSnapshotDto>> {
     Ok(Json(
         sessions::snapshot(state.db().conn(), session_id).await?,
+    ))
+}
+
+/// `?seq=` of the Context view (M23 23.3).
+#[derive(Debug, Default, Deserialize)]
+pub struct ContextQuery {
+    pub seq: Option<i32>,
+}
+
+/// `GET /api/sessions/:id/context` (spec/10 §2.8).
+pub async fn context(
+    State(state): State<AppState>,
+    Path(session_id): Path<i32>,
+    Query(query): Query<ContextQuery>,
+) -> AppResult<Json<ContextBreakdownDto>> {
+    Ok(Json(
+        sessions::context(state.db().conn(), session_id, query.seq).await?,
     ))
 }
 

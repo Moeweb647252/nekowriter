@@ -24,6 +24,10 @@ chapter_number?: number | null, research_topic?: string | null,
  */
 research_task_kind?: ResearchTaskKind | null, model_label: string, 
 /**
+ * The frozen context window, for the Context view's share label (M23).
+ */
+context_window: number, 
+/**
  * The frozen thinking effort from `model_snapshot` (spec/04 §5.1, D-162): the value in the
  * protocol's wire field, or `None` when the model takes no effort parameter.
  */

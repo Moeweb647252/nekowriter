@@ -45,6 +45,7 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { Textarea } from "@/components/ui/textarea"
 import { ActivityStream } from "@/features/agent/ActivityStream"
+import { ContextButton } from "@/features/agent/context/ContextDialog"
 import { Composer } from "@/features/agent/Composer"
 import { SessionControls } from "@/features/agent/SessionControls"
 import { SessionErrorNotice } from "@/features/agent/SessionErrorNotice"
@@ -241,12 +242,15 @@ export default function ConceptionStudio() {
                 {t("book:conception.subtitle")}
               </p>
             </div>
-            {running ? (
-              <span className="flex items-center gap-1 text-xs text-muted-foreground">
-                <Loader2 className="size-3 animate-spin" />
-                {t("book:conception.working")}
-              </span>
-            ) : null}
+            <div className="flex items-center gap-3">
+              {session === undefined ? null : <ContextButton session={session} />}
+              {running ? (
+                <span className="flex items-center gap-1 text-xs text-muted-foreground">
+                  <Loader2 className="size-3 animate-spin" />
+                  {t("book:conception.working")}
+                </span>
+              ) : null}
+            </div>
           </header>
           {session === undefined ? null : (
             <SessionControls

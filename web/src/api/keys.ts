@@ -98,5 +98,7 @@ export const keys = {
     list: (bookId: number, filters?: string) =>
       ["sessions", "list", bookId, filters ?? ""] as const,
     detail: (id: number) => ["sessions", "detail", id] as const,
+    context: (id: number, seq: number | null) =>
+      ["sessions", "context", id, seq ?? "current"] as const,
   },
 }

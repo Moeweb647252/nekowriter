@@ -24,6 +24,7 @@ function researchSession(overrides: Partial<SessionDto>): SessionDto {
     chapter_number: null,
     research_topic: null,
     model_label: "GPT 6.1 Terra",
+    context_window: 100000,
     status: "running",
     phase: "none",
     granularity: null,

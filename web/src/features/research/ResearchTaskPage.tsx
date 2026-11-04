@@ -15,6 +15,7 @@ import {
 } from "@/api/hooks/research"
 import { useResumeSession, useSession, useSessionControl } from "@/api/hooks/sessions"
 import { ActivityStream } from "@/features/agent/ActivityStream"
+import { ContextButton } from "@/features/agent/context/ContextDialog"
 import { SessionControls } from "@/features/agent/SessionControls"
 import { StatusBadge } from "@/components/common/StatusBadge"
 import { useErrorToast } from "@/components/common/ErrorToast"
@@ -112,6 +113,9 @@ export default function ResearchTaskPage() {
 
       {open && sessionId !== null && snapshot.data !== undefined ? (
         <div className="flex h-[24rem] flex-col overflow-hidden rounded-md border">
+          <div className="flex justify-end border-b px-2 py-1">
+            <ContextButton session={snapshot.data.session} />
+          </div>
           <SessionControls
             session={snapshot.data.session}
             busy={control.isPending || resume.isPending}

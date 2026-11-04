@@ -495,6 +495,7 @@ pub async fn to_dto(
         research_topic,
         research_task_kind,
         model_label,
+        context_window: snapshot.context_window,
         effort,
         status: status_of(row),
         phase: phase_of(row),

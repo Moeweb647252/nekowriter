@@ -24,6 +24,7 @@ const session = {
   write_mode: "review",
   chapter_id: null,
   model_label: "Demo",
+  context_window: 100000,
   phase: "none",
   granularity: null,
   auto_pause: false,

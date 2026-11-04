@@ -11,6 +11,7 @@ pub mod retry;
 pub mod sse;
 pub mod types;
 
+pub use openai::estimate_tokens;
 pub use retry::LlmError;
 pub use types::*;
 

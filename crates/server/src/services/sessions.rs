@@ -11,6 +11,7 @@ use sea_orm::{
 };
 use serde_json::json;
 
+use crate::agent::breakdown::{self, ContextBreakdownDto};
 use crate::agent::runner;
 use crate::agent::session::{self, TransitionCause};
 use crate::agent::tools::registry::{initial_phase, role_enum_of_kind, role_of_kind};
@@ -23,9 +24,9 @@ use crate::db::entities::{
     providers, research_tasks, tracks,
 };
 use crate::db::json::{
-    AgentRole, BookSettings, ChapterStatus, Granularity, InboxKind, JsonText, ModelSnapshot, Phase,
-    Protocol, ResearchTaskStatus, RoleModels, SessionCounters, SessionKind, SessionStatus,
-    StoredBlock, ToolCallStatus, TrackKind, WriteMode,
+    AgentRole, BookSettings, ChapterStatus, Granularity, InboxKind, JsonText, MessageKind,
+    ModelSnapshot, Phase, Protocol, ResearchTaskStatus, RoleModels, SessionCounters, SessionKind,
+    SessionStatus, StoredBlock, ToolCallStatus, TrackKind, WriteMode,
 };
 use crate::error::{AppError, ErrorCode};
 use crate::events::ServerEvent;
@@ -563,30 +564,23 @@ fn events_for_new_session(
 ) {
 }
 
-/// Rough token estimate of the kickoff: CJK characters × 1.0 + other characters ÷ 4 (spec/03 §10).
+/// Rough token estimate of the kickoff, using the provider-neutral estimator (spec/03 §10).
 fn kickoff_too_large(session: &agent_sessions::Model, kickoff: &agent_messages::Model) -> bool {
     let snapshot = session.model_snapshot.clone().into_inner();
     let blocks: Vec<StoredBlock> = kickoff.content.clone().into_inner();
-    let mut estimate = 0i64;
-    for block in blocks {
-        if let StoredBlock::Text { text, .. } = block {
-            let mut cjk = 0i64;
-            let mut other = 0i64;
-            for ch in text.chars() {
-                if is_cjk(ch) {
-                    cjk += 1;
-                } else {
-                    other += 1;
-                }
-            }
-            estimate += cjk + (other + 3) / 4;
-        }
-    }
+    let estimate = kickoff_estimate(&blocks);
     i64::from(snapshot.context_window) > 0 && estimate * 2 > i64::from(snapshot.context_window)
 }
 
-fn is_cjk(ch: char) -> bool {
-    matches!(ch as u32, 0x3040..=0x30FF | 0x3400..=0x4DBF | 0x4E00..=0x9FFF | 0xF900..=0xFAFF)
+/// The provider-neutral token estimate of a kickoff's text blocks.
+fn kickoff_estimate(blocks: &[StoredBlock]) -> i64 {
+    blocks
+        .iter()
+        .filter_map(|block| match block {
+            StoredBlock::Text { text, .. } => Some(nekowriter_llm::estimate_tokens(text)),
+            _ => None,
+        })
+        .sum()
 }
 
 /// `book.model_overrides[role]` → `app_settings["roles.defaults"][role]` (spec/03 §4 step 1),
@@ -1026,6 +1020,59 @@ async fn apply_creation_side_effects(
 }
 
 // ───────────────────────────── reads ─────────────────────────────
+
+/// Load the tool calls of a Context view, keeping only calls whose message is in `loaded`.
+pub async fn context_calls(
+    conn: &impl ConnectionTrait,
+    session_id: i32,
+    loaded: &std::collections::HashSet<i32>,
+) -> Result<Vec<agent_tool_calls::Model>, AppError> {
+    Ok(agent_tool_calls::Entity::find()
+        .filter(agent_tool_calls::COLUMN.session_id.eq(session_id))
+        .order_by_asc(agent_tool_calls::COLUMN.message_id)
+        .order_by_asc(agent_tool_calls::COLUMN.call_index)
+        .all(conn)
+        .await?
+        .into_iter()
+        .filter(|call| loaded.contains(&call.message_id))
+        .collect())
+}
+
+/// The pure Context view of one session (M23 23.3; spec/03 §13.1, spec/10 §2.8).
+///
+/// The three reads go through the pool, never a transaction (plan §3.2 C8). A `seq` must name an
+/// assistant message of this session; the pure function then selects the messages before it.
+pub async fn context(
+    conn: &impl ConnectionTrait,
+    session_id: i32,
+    seq: Option<i32>,
+) -> Result<ContextBreakdownDto, AppError> {
+    let session = agent_sessions::Entity::find_by_id(session_id)
+        .one(conn)
+        .await?
+        .ok_or_else(|| AppError::not_found(format!("session {session_id}")))?;
+    let messages = agent_messages::Entity::find()
+        .filter(agent_messages::COLUMN.session_id.eq(session_id))
+        .order_by_asc(agent_messages::COLUMN.seq)
+        .all(conn)
+        .await?;
+    let loaded: std::collections::HashSet<i32> =
+        messages.iter().map(|message| message.id).collect();
+    let calls = context_calls(conn, session_id, &loaded).await?;
+    if let Some(seq) = seq
+        && !messages
+            .iter()
+            .any(|message| message.seq == seq && message.kind == MessageKind::Assistant)
+    {
+        let mut fields = serde_json::Map::new();
+        fields.insert(
+            "seq".to_owned(),
+            serde_json::json!("must be an assistant message of this session"),
+        );
+        return Err(AppError::invalid_fields(fields));
+    }
+    Ok(breakdown::breakdown(&session, &messages, &calls, seq))
+}
 
 /// `GET /api/sessions/:id` (spec/10 §2.7).
 pub async fn snapshot(
@@ -2338,6 +2385,7 @@ async fn debug_session_inner(
         vec![StoredBlock::Text {
             text: "Debug session: use the test-only tools.".to_owned(),
             cache: None,
+            source: None,
         }],
     )
     .await?;
@@ -2572,6 +2620,7 @@ async fn debug_echo_inner(
         vec![StoredBlock::Text {
             text: "Debug session: use the test-only tools.".to_owned(),
             cache: None,
+            source: None,
         }],
     )
     .await?;
@@ -2863,6 +2912,20 @@ mod tests {
             created_at: now,
             updated_at: now,
         }
+    }
+
+    #[test]
+    fn kickoff_estimate_counts_hangul_like_the_provider() {
+        let text = "안녕하세요. 한국어 문장입니다.";
+        let blocks = vec![StoredBlock::Text {
+            text: text.to_owned(),
+            cache: None,
+            source: None,
+        }];
+        assert_eq!(
+            kickoff_estimate(&blocks),
+            nekowriter_llm::estimate_tokens(text)
+        );
     }
 
     /// A session's frozen snapshot carries the provider's typed protocol, not a stringly fallback.
