@@ -25,7 +25,9 @@ async fn book_session(app: &TestApp, book_id: i32) -> agent_sessions::Model {
 #[tokio::test]
 async fn start_session_rejects_bad_actions_and_maps_outline_refusals() {
     let app = TestApp::new().await;
-    let (status, _) = app.patch("/api/app-settings", json!({"roles_defaults":{}})).await;
+    let (status, _) = app
+        .patch("/api/app-settings", json!({"roles_defaults":{}}))
+        .await;
     assert_eq!(status, StatusCode::OK);
     let book = app.create_book("Book").await;
     let book_id = book["id"].as_i64().unwrap() as i32;
