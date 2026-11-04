@@ -12,6 +12,7 @@ import { AgentPanel } from "@/features/agent/AgentPanel"
 import { BookBreadcrumb } from "@/features/workspace/BookBreadcrumb"
 import { Navigator } from "@/features/workspace/Navigator"
 import { SystemOffBanner } from "@/features/canon/SystemOffBanner"
+import { onBookAgentRequest } from "@/features/agent/bookAgentIntent"
 import { canonPageSystem } from "@/features/workspace/canonVisibility"
 import type { BookShell } from "@/features/workspace/shell"
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from "@/components/ui/resizable"
@@ -69,6 +70,9 @@ export default function BookLayout() {
   const expandAgentPanel = useCallback(() => {
     agentRef.current?.expand()
   }, [agentRef])
+  useEffect(() => onBookAgentRequest((requestedBook) => {
+    if (requestedBook === bookId) expandAgentPanel()
+  }), [bookId, expandAgentPanel])
 
   // One SSE stream per open book (spec/11 §4.2).
   useEffect(() => {
@@ -217,7 +221,7 @@ export default function BookLayout() {
               // `collapsedSize` to 0), so this is the panel reporting its own state.
               onResize={(size) => setAgentPanelCollapsed(size.inPixels === 0)}
             >
-              <AgentPanel bookId={bookId} chapterId={chapterId} />
+              <AgentPanel bookId={bookId} chapterId={chapterId} bookStatus={book.data.status} />
             </ResizablePanel>
           </>
         )}

@@ -2,6 +2,11 @@
 # DECISIONS D-041). `demo_hints.language` picks `zh` or `en`.
 
 [zh]
+assistant_topic = "宋代茶楼的日常经营"
+assistant_requirements = "布局、伙计分工、常见茶点与待客礼数，供书中的茶楼场景使用。"
+assistant_scope = "宋代社会"
+assistant_reply = "资料任务已经准备好，知识检查也已启动；我会在会话列表里继续跟踪。"
+assistant_start_guidance = "先核对宋代茶楼的经营细节，再开始写作。"
 sentences = [
   "风从山谷里吹来，带着湿润的草木气息。",
   "他握紧了手中的旧剑，剑鞘上的裂痕像一道陈年的伤。",
@@ -193,6 +198,11 @@ question = "故事的情感基调更偏向哪一边？"
 options = ["克制而余韵悠长", "激烈而步步紧逼"]
 
 [en]
+assistant_topic = "Daily operation of a Song-era tea house"
+assistant_requirements = "Layout, staff roles, common snacks and hospitality for a tea-house scene."
+assistant_scope = "Song society"
+assistant_reply = "The research task is ready and the knowledge check has started; I will track it in the session list."
+assistant_start_guidance = "Check the tea-house details first, then start writing."
 sentences = [
   "Wind came down the valley, carrying the smell of wet grass.",
   "He tightened his grip on the old sword, whose scabbard bore a crack like an old wound.",

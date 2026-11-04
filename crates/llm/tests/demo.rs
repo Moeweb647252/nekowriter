@@ -685,3 +685,29 @@ fn the_knowledge_check_demo_searches_plans_topics_and_finishes() {
     assert_eq!(plan.tools[0].1, "finish_research");
     assert!(!lang.prep_report.is_empty());
 }
+
+#[test]
+fn the_book_agent_demo_arm_reads_writes_and_starts_a_session() {
+    let provider = DemoProvider::new();
+    for language in ["zh-CN", "en"] {
+        let mut hint = hints("book_agent", "none", language);
+        let preview = choose_action(&hint, provider.lang(Some(&hint)));
+        assert_eq!(preview.tools[0].1, "book_overview", "{language}");
+        hint.step_in_phase = 1;
+        let task = choose_action(&hint, provider.lang(Some(&hint)));
+        assert_eq!(task.tools[0].1, "create_research_task", "{language}");
+        assert!(
+            !task.tools[0].2["topic"]
+                .as_str()
+                .unwrap_or_default()
+                .is_empty()
+        );
+        hint.step_in_phase = 2;
+        let started = choose_action(&hint, provider.lang(Some(&hint)));
+        assert_eq!(started.tools[0].1, "start_session", "{language}");
+        assert_eq!(started.tools[0].2["action"], "knowledge_check");
+        hint.step_in_phase = 3;
+        let reply = choose_action(&hint, provider.lang(Some(&hint)));
+        assert!(!reply.text.unwrap_or_default().is_empty(), "{language}");
+    }
+}
