@@ -128,6 +128,12 @@ pub async fn create_inner(
     ensure_entities_visible(tx, write, book_id, &input.entity_ids).await?;
     let timestamp = stamp();
     let status = input.status.unwrap_or(TimelineStatus::Occurred);
+    if status == TimelineStatus::Abandoned {
+        return Err(CanonError::field(
+            "status",
+            "a new entry cannot start abandoned",
+        ));
+    }
     if status == TimelineStatus::Planned && input.chapter_id.is_some() {
         return Err(CanonError::field(
             "chapter_id",
@@ -253,6 +259,12 @@ pub async fn update_inner(
         ensure_entities_visible(tx, write, existing.book_id, entity_ids).await?;
     }
     // Status moves only forward: planned -> occurred, planned -> abandoned (T4).
+    if patch.status == Some(TimelineStatus::Planned) {
+        return Err(CanonError::field(
+            "status",
+            "an update can only promote to occurred or abandon a planned entry",
+        ));
+    }
     let next_status = patch.status.unwrap_or(existing.status);
     match (existing.status, next_status) {
         (TimelineStatus::Occurred, TimelineStatus::Abandoned)
@@ -816,10 +828,15 @@ pub async fn load(
     conn: &impl ConnectionTrait,
     event_id: i32,
 ) -> CanonResult<timeline_events::Model> {
-    timeline_events::Entity::find_by_id(event_id)
+    let row = timeline_events::Entity::find_by_id(event_id)
         .one(conn)
         .await?
-        .ok_or_else(|| CanonError::not_found(format!("timeline event #{event_id}")))
+        .ok_or_else(|| CanonError::not_found(format!("timeline event #{event_id}")))?;
+    // The root is an internal anchor, never a nameable timeline entry (T1).
+    if row.kind == TimelineKind::Root {
+        return Err(CanonError::not_found(format!("timeline event #{event_id}")));
+    }
+    Ok(row)
 }
 
 /// Loads one timeline event and checks it belongs to the book.

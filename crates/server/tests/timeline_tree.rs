@@ -127,6 +127,16 @@ async fn validation_matrix_writes_nothing() {
 
     let occurred = create_event(&app, book_id, json!({ "title": "Occurred" })).await;
     let occurred_id = occurred["id"].as_i64().expect("id") as i32;
+    let planned = create_event(
+        &app,
+        book_id,
+        json!({ "title": "Planned", "status": "planned" }),
+    )
+    .await;
+    let planned_id = planned["id"].as_i64().expect("id") as i32;
+    let (status, response) = patch_event(&app, planned_id, json!({ "status": "planned" })).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "{response}");
+    assert_error(&response, "validation.failed");
     for body in [
         json!({ "status": "planned" }),
         json!({ "status": "abandoned" }),
@@ -204,9 +214,15 @@ async fn root_and_parent_delete_protection() {
         ),
     )
     .await as i32;
+    let (status, response) = app.get(&format!("/api/timeline-events/{root_id}")).await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "root get: {response}");
+    assert_error(&response, "not_found");
+    let (status, response) = patch_event(&app, root_id, json!({ "title": "Changed" })).await;
+    assert_eq!(status, StatusCode::NOT_FOUND, "root patch: {response}");
+    assert_error(&response, "not_found");
     let (status, response) = app.delete(&format!("/api/timeline-events/{root_id}")).await;
-    assert_eq!(status, StatusCode::BAD_REQUEST, "root delete: {response}");
-    assert_error(&response, "validation.failed");
+    assert_eq!(status, StatusCode::NOT_FOUND, "root delete: {response}");
+    assert_error(&response, "not_found");
 
     let parent = create_event(&app, book_id, json!({ "title": "Parent" })).await;
     let parent_id = parent["id"].as_i64().expect("id") as i32;
@@ -268,6 +284,14 @@ async fn foreshadowing_anchor_validation_and_planned_status() {
         .await;
     assert_eq!(status, StatusCode::CREATED, "{hook}");
     let hook_id = hook["id"].as_i64().expect("id") as i32;
+    let (status, response) = app
+        .patch(
+            &format!("/api/foreshadowing/{hook_id}"),
+            json!({ "payoff_event_id": null, "payoff_position": "after" }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST, "half clear: {response}");
+    assert_error(&response, "validation.failed");
     assert_eq!(hook["payoff_event_id"], planned_id);
     assert_eq!(hook["payoff_position"], "after");
     assert_eq!(hook["payoff_event_status"], "planned");

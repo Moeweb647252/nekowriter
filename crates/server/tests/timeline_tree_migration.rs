@@ -19,6 +19,8 @@ VALUES
   (1, 'First', '', '', 'zh-CN', 'active', '{}', '{}', '{}',
    '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z'),
   (2, 'Second', '', '', 'en', 'active', '{}', '{}', '{}',
+   '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z'),
+  (3, 'Eventless', '', '', 'en', 'active', '{}', '{}', '{}',
    '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z');
 
 INSERT INTO timeline_events
@@ -127,7 +129,7 @@ async fn migration_creates_one_root_per_book_and_reparents_history() {
             "SELECT count(*) AS n FROM timeline_events WHERE kind = 'root'"
         )
         .await,
-        2
+        3
     );
     assert_eq!(
         scalar(
@@ -259,7 +261,76 @@ async fn a_broken_copy_rolls_back_and_retries() {
             "SELECT count(*) AS n FROM timeline_events WHERE kind = 'root'"
         )
         .await,
-        2
+        3
+    );
+}
+
+#[tokio::test]
+async fn a_guard_failure_rolls_back_and_retries() {
+    let (_dir, db) = pre_0013_database().await;
+    // The trigger deletes one existing entry while the roots are inserted, so the entry-count
+    // guard must fire after the ALTERs and roots and roll the whole migration back.
+    db.conn()
+        .execute_unprepared(
+            "CREATE TRIGGER lose_entry AFTER INSERT ON timeline_events \
+             WHEN NEW.kind = 'root' BEGIN DELETE FROM timeline_events WHERE id = 1; END;",
+        )
+        .await
+        .expect("trigger");
+    let error = nekowriter_migration::up(db.conn()).await;
+    assert!(error.is_err(), "the guard-breaking copy fails: {error:?}");
+    assert_eq!(
+        column_count(db.conn(), "timeline_events", "parent_id").await,
+        0,
+        "a failed guard rolled the columns back"
+    );
+    assert_eq!(
+        scalar(
+            db.conn(),
+            "SELECT count(*) AS n FROM seaql_migrations WHERE version = 'm0013_timeline_tree'"
+        )
+        .await,
+        0
+    );
+    assert_eq!(
+        scalar(db.conn(), "SELECT count(*) AS n FROM timeline_events").await,
+        4,
+        "the pre-0013 rows are intact"
+    );
+    db.conn()
+        .execute_unprepared("DROP TRIGGER lose_entry")
+        .await
+        .expect("drop trigger");
+    nekowriter_migration::up(db.conn())
+        .await
+        .expect("the repaired copy retries");
+    assert_eq!(
+        scalar(
+            db.conn(),
+            "SELECT count(*) AS n FROM timeline_events WHERE kind = 'root'"
+        )
+        .await,
+        3
+    );
+}
+
+#[tokio::test]
+async fn the_upgraded_list_maps_every_root_parent_to_null() {
+    let (_dir, db) = pre_0013_database().await;
+    nekowriter_migration::up(db.conn())
+        .await
+        .expect("0013 applies");
+    let rows = nekowriter::services::canon::timeline::list(
+        db.conn(),
+        1,
+        &nekowriter::api::dto::canon::TimelineQuery::default(),
+    )
+    .await
+    .expect("timeline list");
+    assert_eq!(rows.len(), 3, "only entries are listed");
+    assert!(
+        rows.iter().all(|row| row.parent_id.is_none()),
+        "a migrated top-level entry reports parent_id null: {rows:?}"
     );
 }
 
