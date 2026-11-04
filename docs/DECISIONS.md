@@ -4039,3 +4039,73 @@ as before. The Demo provider now exercises the path spec/04 §7.2 describes, and
   - spec/09 §2;
   - spec/10 §2.4, §4;
   - spec/11 §5.5, §9.
+
+### D-171 A context treemap per request, estimated per part and scaled to the provider's total
+
+- **Context**:
+  - The author asked for "一个上下文 token 组成的矩形树图". The agent panel showed only cumulative
+    usage, so nothing said whether the settings block, the memory, the tool results or the model's
+    replayed output filled a session's context.
+  - Their answers (2026-11-05):
+    - a product feature in the agent panel, for every session;
+    - the current context by default, with every earlier request selectable;
+    - the first level grouped by content type.
+  - Code facts:
+    - stored kickoff blocks keep no prompt key, and empty blocks leave no gap, so they cannot be
+      mapped back;
+    - each assistant message stores its own usage with the request's prompt total;
+    - history is append-only and sealed results are immutable, so any past request can be
+      rebuilt exactly;
+    - `seal::compose` previews an unsealed result;
+    - the heuristic exists three times: the llm crate, the Demo provider, and
+      `kickoff_too_large` with a narrower CJK set;
+    - the web has no chart library, and the shadcn chart tokens are grey.
+- **Decision** (plan `docs/research/context-treemap-plan.md`):
+  - **The view.** `ContextDialog` is opened from **Context** in the agent panel's footer, the
+    conception studio's header and the research task page. It shows a request strip, a treemap
+    with zoom, a list view and a legend.
+  - **The data.** `GET /sessions/:id/context?seq` returns the request that produced assistant
+    message `seq`, or the current context without it. It is read-only. It reads messages before
+    calls through the pool, as every read does, and never calls a provider. Its query key sits
+    outside `keys.sessions.detail(id)`, which every session event invalidates.
+  - **Classification.**
+    - Groups: system prompt, tools, kickoff, author, runtime, model, results. Each splits into
+      parts, and a part lists up to 40 items.
+    - Appendices count under the author or the runtime, not under the tool that carried them.
+    - Reasoning counts only when it is replayed (Anthropic always; OpenAI-compatible and mock
+      with `reasoning_replay = always`).
+  - **Counting.**
+    - Every part is estimated with one function, `nekowriter_llm::estimate_tokens`, and scaled
+      uniformly so that a measured request totals the provider's count. The current context uses
+      the latest measured ratio.
+    - No tokenizer is bundled, because models differ and the stack is fixed.
+    - `kickoff_too_large` now uses the same function.
+  - **Labels.** `StoredBlock::Text` gains an optional `source`: the prompt key of a kickoff block,
+    or `edit_report` / `inbox.<kind>` for an idle delivery's sections. It is display only and
+    never sent to a provider. Rows from before this decision fall back by message kind, and their
+    kickoff blocks are numbered. No migration is needed.
+  - **Color.**
+    - In a treemap any two groups can touch, so the palette was checked on all pairs. Seven
+      categorical hues fail that check. On the app's surfaces the worst normal-vision ΔE is 10.5
+      light and 9.8 dark, and the worst CVD ΔE is 3.2 light and 1.6 dark.
+    - Three origin hues therefore carry color: setup, messages and agent work, the reference
+      palette's first three slots. They pass all pairs in both themes.
+    - In-fill group labels carry identity. There is no header band, so areas stay proportional
+      across groups, and the list view holds every number.
+- **Consequences**:
+  - The author can see what takes the room in any session and how it grew, without exact counts
+    per part. The total matches the provider for every measured request.
+  - The large-kickoff warning now counts Hangul and full-width characters as one token each, as
+    estimated usage already did.
+  - Kickoff texts and request bytes are unchanged, so `kickoff_baseline` keeps its snapshots.
+  - Demo sessions report estimated usage, so their view is never calibrated. The Demo's count
+    skips assistant messages, so the strip draws the breakdown's own estimate for estimated
+    requests.
+- **Spec**:
+  - PROJECT §6.19, §8.6, §8.7, §9.2, §10 (#36), §11;
+  - spec/01 §3.1;
+  - spec/02 §4;
+  - spec/03 §10, §13.1, §15 (#36);
+  - spec/04 §2;
+  - spec/10 §2.7, §2.8;
+  - spec/11 §2, §4.2, §5.3, §5.4, §7, §9.

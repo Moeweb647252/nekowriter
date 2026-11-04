@@ -914,7 +914,9 @@ type ViewSnapshot =
 
 // agent_messages.content
 type StoredBlock =
-  | { type: "text"; text: string; cache?: boolean }          // cache = place a cache breakpoint after this block
+  | { type: "text"; text: string; cache?: boolean;           // cache = place a cache breakpoint after this block
+      source?: string }   // D-171: a kickoff block's prompt key; edit_report / inbox.user_message /
+                          // inbox.notice on idle-delivery sections; display only, never sent
   | { type: "reasoning"; text: string }                      // display only; replay uses provider_payload
   | { type: "tool_call"; call_id: string; name: string; input_text: string };
 

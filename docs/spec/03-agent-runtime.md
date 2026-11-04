@@ -607,7 +607,9 @@ end of the settings block (shared by every session of the book); see spec/04 §3
 | chapter_resync | `block.settings`⁎ · `block.canon_systems` · `block.memory` · `block.cast_index` · `block.chapter_diff` · `archivist.kickoff.resync` |
 | rollover | `block.settings`⁎ · `block.canon_systems` · `block.writing_skills` · `block.memory` · `block.goals` · `block.chapter_draft` · `writer.kickoff.rollover` |
 
-⁎ `cache: true` on that block. Each block is one `text` block of the kickoff message.
+⁎ `cache: true` on that block. Each block is one `text` block of the kickoff message, and it
+stores its prompt key in `source` (D-171), which the context view reads (§13.1) and no request
+sends.
 
 **System-gated blocks** (spec/06 §10): a block owned by a canon system that is off in the
 session's `canon_systems` is not rendered at all: `block.cast_index` (Entities), `block.goals`
@@ -653,7 +655,10 @@ Task templates pull in two more blocks through template includes, so the table s
   each with its purpose, chapter range and links. It is blank when none is relevant.
 - **Budget warning**: estimate kickoff tokens (CJK characters × 1.0 + other characters ÷ 4,
   rounded up). If the estimate exceeds 50% of the context window, the session still starts and
-  `session.updated` carries `warnings: ["context.large_kickoff"]`.
+  `session.updated` carries `warnings: ["context.large_kickoff"]`. The heuristic has one
+  implementation, `nekowriter_llm::estimate_tokens`. Its CJK set covers Han, kana, Hangul and
+  full-width forms, and the warning, estimated usage (spec/04 §2) and the context breakdown
+  (§13.1) all use it (D-171).
 
 ## 11. Request building
 
@@ -708,6 +713,70 @@ Each assistant message stores its `Usage`. The session accumulates totals and
 `last_prompt_tokens` (input + cached + cache-write for the latest request). The agent panel shows
 the cumulative input (with the cached part) and output tokens. Book-level totals are a sum over
 its sessions (computed on demand for the overview).
+
+### 13.1 Context breakdown (D-171)
+
+`GET /sessions/:id/context?seq` (spec/10 §2.7) shows what fills one request. `agent/breakdown.rs`
+is a pure function over loaded rows. The loader reads the session, then its messages, then its
+calls, through the pool like any read (spec/01 §7), and drops calls whose message it did not load,
+so a concurrent step cannot add half a turn. It never takes the write lock and never calls a
+provider.
+
+- **Which request**:
+  - `seq = k` (an assistant message) rebuilds the request that produced it: the frozen
+    `system_prompt` and `tools`, every message with `seq < k`, and the sealed results of their
+    calls. By §1.3 this is exactly what was sent.
+  - Without `seq`, it is the **current context**: every message and call as they stand. An
+    unsealed call with a raw result or an appendix counts as `seal::compose` would deliver it now.
+    Any other unsealed call counts in `pending_calls` and adds nothing.
+  - Unconsumed inbox rows are not counted.
+- **Classification** (groups in this order; empty parts and groups are omitted):
+
+  | Group | Part (`key`, `name`) | From |
+  |---|---|---|
+  | `system` | `system_prompt` | the frozen system prompt |
+  | `tools` | `tool`, tool name | each frozen `ToolDef`: name, description, `input_schema` as compact JSON |
+  | `kickoff` | `block`, the block's `source` (`null` before D-171) | each text block of the kickoff, in kickoff order |
+  | `author` | `message` | text blocks by rule (a); `inbox` appendices with `inbox_kind` `user_message` or none |
+  | `author` | `feedback` | `user_feedback` appendices |
+  | `author` | `edit_report` | `edit_report` appendices; text blocks by rule (a) |
+  | `runtime` | `notice` | text blocks by rule (a); `inbox` appendices with `inbox_kind` `notice` |
+  | `runtime` | `effect_notice` | `effect_notice` appendices |
+  | `runtime` | `nudge` | text blocks by rule (a) |
+  | `model` | `text` | assistant text blocks |
+  | `model` | `reasoning` | assistant reasoning blocks, only when replayed: always for `anthropic`; for `openai` and `mock` when `options.reasoning_replay = always` (spec/04 §2, §5) |
+  | `model` | `call`, tool name | tool name and `input_text` of each tool-call block |
+  | `results` | `result`, tool name | the delivered text minus the estimate of each of its appendices, never below 0 |
+
+  **(a)** A text block of a non-kickoff user-side message is classified by `source`:
+  `edit_report` → `author.edit_report`, `inbox.user_message` → `author.message`, `inbox.notice` →
+  `runtime.notice`. Without `source` it is classified by message kind: `user` → `author.message`,
+  `notice` → `runtime.notice`, `nudge` → `runtime.nudge`.
+
+  Parts are ordered largest first, except `kickoff`, whose parts keep their order. The parts of
+  `author`, `runtime`, `model` and `results` list **items** `{seq, call_index, estimate,
+  excerpt}`. At most 40 are listed, largest first, and the rest are folded into
+  `rest: {count, estimate}`. An excerpt is the first 80 characters with whitespace collapsed.
+- **Estimate and scale**:
+  - Every leaf is estimated with `nekowriter_llm::estimate_tokens` (§10's heuristic), and
+    `estimate` is their sum.
+  - For `seq = k`, when message *k* has a non-estimated `usage` with a prompt total `p > 0`
+    (`input + cached + cache_write`): `measured = p`, `cached = cached_input_tokens`,
+    `scale = p / estimate` and `calibrated = true`.
+  - Otherwise, and always for the current context, `measured` and `cached` are null. `scale` is
+    then the ratio of the session's latest calibrated request, or 1 when there is none (the Demo
+    reports estimated usage, so a Demo session is never calibrated).
+  - The UI shows `round(estimate × scale)` as an estimate. Shares do not depend on the scale.
+- `rollover_at = floor(0.85 × context_window) − max_output_tokens` when the session's current
+  kind and phase may roll over (§9; one `rollover_eligible` helper serves both), else `null`.
+- `requests` lists every assistant message, oldest first:
+  - `seq`, `prompt_tokens` (`usage.last_prompt_tokens`), `cached_tokens`, `estimated`,
+    `created_at`. A message without `usage` reports 0 and `estimated`.
+  - `estimate`: the heuristic total of that request, equal to its own view's `estimate`, computed
+    with running sums in the same pass.
+
+  An estimated provider count, such as the Demo's, skips assistant messages (spec/04 §2), so the
+  strip draws `estimate` for an estimated request.
 
 ## 14. Concurrency and locking rules
 
@@ -850,3 +919,12 @@ With `ScriptedProvider` (spec/04 §7) and a temp database:
     feedback executes nothing and is not an error, and `end` while held leaves it unexecuted. In
     `full` mode it executes at once. Read tools never hold. A `write_mode` PATCH while running
     applies to the next action call.
+36. Context breakdown (`context_breakdown.rs`, D-171): for every assistant message *k* of a
+    scripted session, the breakdown for `seq = k` counts the same system prompt, tool names,
+    user-block texts and tool-result texts, in order, as the request the `ScriptedProvider`
+    received for it. Its assistant parts come from exactly the messages before *k*, and
+    `requests[k].estimate` equals that view's `estimate`. Each kickoff block carries its key in
+    `source`, and no request carries `source`. Appendices are counted under `author` or
+    `runtime`, not under the tool. A measured request sets `scale = measured / estimate`. A held
+    call without a result counts in `pending_calls` only. A `seq` that is not an assistant
+    message → `400 validation.failed`.

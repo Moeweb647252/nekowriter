@@ -76,6 +76,7 @@ web/src/
 │   ├── index.ts                 # i18next init, language detection, formatters
 │   └── locales/{en,zh-CN}/{common,library,book,chapter,agent,canon,knowledge,prompts,skills,settings,errors}.json
 ├── lib/                         # utils (cn), wordcount.ts, format.ts, text.ts (pid helpers), hotkeys.ts
+│                                # and treemap.ts (squarified layout, D-171)
 ├── styles/                      # prose.css (reading column), status tokens
 └── test/setup.ts
 ```
@@ -138,6 +139,14 @@ message and a retry.
 - `chapter.updated` also invalidates `keys.canon.goals(book_id)` and `keys.books.overview(book_id)`,
   because an approval can make a `chapter_at_least` condition true (spec/06 §11.3). No goal page
   ever needs a manual refresh.
+- `session.message`, `session.tool_call` and `session.updated` invalidate
+  `keys.sessions.context(session_id, "current")`, coalesced to one refetch per second. Only an open
+  context view has that query active, so a closed one costs nothing. A past request's query
+  (`keys.sessions.context(id, seq)`) never changes and has `staleTime: Infinity` (D-171).
+  - The key is `["sessions", "context", id, seq | "current"]`, deliberately **outside**
+    `keys.sessions.detail(id)`. Those handlers invalidate the detail prefix on every event, and
+    TanStack refetches an active invalidated query whatever its `staleTime`, so a key under it
+    would refetch past views and skip the coalescing.
 - Deltas and previews are coalesced with `requestAnimationFrame` before they reach the store.
 - After a reconnect (`onopen` following an `onerror`), invalidate all active queries
   (`queryClient.invalidateQueries()`) and reload the open chapter document.
@@ -312,7 +321,7 @@ message and a retry.
     disabled with `agent:composer.disabled_review` while `HeldCallReview` owns the decision, so a
     held call never has two differently-worded reject paths; for a write hold it is disabled with
     `agent:composer.disabled_dock`, which names the draft pane instead of "the review above");
-  - `UsageFooter`.
+  - `UsageFooter`, ending with `ContextButton` (the context view, below).
 - **Book agent** (D-169, spec/08 §8). The navigator item and a `Bot` button in the panel header
   open it:
   - with an open `book_agent` session, they pin it **manually** (D-167), so auto-follow never
@@ -353,13 +362,81 @@ message and a retry.
   waiting status, each rendered by the session screen that owns the conversation, both above the
   composer, and in both the composer steps aside while the form or the review holds the decision.
   The vocabulary matches too — approve / needs changes there, approve / request changes here.
+- **Context view** (D-171, `features/agent/context/`, data from spec/03 §13.1):
+  - **Entry points**: `ContextButton` (Lucide `LayoutGrid`, **Context**) opens `ContextDialog`
+    for one session. It sits in three places:
+    - at the end of `UsageFooter`, labeled with `usage.last_prompt_tokens` as a share of
+      `SessionDto.context_window` once a request was sent;
+    - in the conception studio's conversation header;
+    - in the research task page's session section.
+
+    Every session kind and status gets it.
+  - **`ContextDialog`** (`Dialog`, `max-w-5xl`), top to bottom:
+    1. **Header line**:
+       - "≈ 42,180 tokens · 33% of 128,000" (no "≈" for a provider total);
+       - the source: **Provider count** (a calibrated past request), **Estimate, scaled to the
+         provider's last count** (a calibrated current view) or **Estimate**;
+       - **Cached n** when known;
+       - "n tool calls have no result yet and are not counted" when `pending_calls > 0`.
+    2. **`RequestStrip`**:
+       - one column per request, then an outlined **Current** column;
+       - a column's height is `prompt_tokens` for a measured request and `estimate` for an
+         estimated one, so it matches its own view's header. **Current** is
+         `round(estimate × scale)`. The scale tops at `max(context_window, the largest column)`,
+         with a hairline at the window and a dashed **Renews here** line at `rollover_at`;
+       - columns have 4 px rounded tops on the baseline, 1 px gaps and a minimum width of 3 px.
+         Past that the strip scrolls in its own box and keeps the selection in view;
+       - muted ink, with the selected column in foreground ink;
+       - a hover tooltip ("Step 12 · 42,180 tokens · cached 30,000 · 14:02");
+       - one tab stop, `role="slider"`: Left, Right, Home and End move the selection, and
+         `aria-valuetext` reads "Step 12 of 40, 42,180 tokens". The strip always reads `requests`
+         from the current query.
+    3. **Breadcrumb** ("Context › Tool results › read_chapter") and a **Treemap | List** toggle,
+       remembered in the UI store.
+    4. **`ContextTreemap`** (SVG, 420 px tall, layout from `lib/treemap.ts`):
+       - groups are laid out first, then their leaves inside. A leaf is an item (and the folded
+         `rest`) when its part has items, otherwise the part;
+       - gaps are 4 px between groups and 2 px between leaves. Leaves fill the group's whole box,
+         with no header band, so areas stay proportional across groups;
+       - white in-fill labels, measured with 6 px padding and never clipped:
+         - the group's name and share, in bold, at its top-left, when they fit in its top-left
+           leaf (whose own label then moves down);
+         - a leaf's name, then its share, when they fit;
+         - the rest is left to the tooltip, the legend and the list;
+       - text is measured through an injectable function (canvas `measureText` by default) and the
+         width comes from a `ResizeObserver`, so tests pass fixed values;
+       - fills use the group's origin token (§7);
+       - hover or focus draws a 2 px foreground ring and a tooltip: group, part, item ("Message 12
+         · call 2"), "≈ tokens", share, excerpt;
+       - click zooms one level (a group, then a part with items), and **Escape** or the
+         breadcrumb zooms out. While zoomed, `DialogContent`'s `onEscapeKeyDown` prevents closing
+         and zooms out instead; at the top level Escape closes the dialog;
+       - keyboard: one tab stop; arrows move between leaves in size order, **Enter** zooms,
+         **Escape** zooms out;
+       - a request change keeps the zoom path when it still exists;
+       - no zoom animation under reduced motion.
+    5. **List view**: a table (Name, ≈ Tokens, Share). Group rows expand to parts and parts to
+       items, 40 plus "n more". Rows are sorted largest first, but kickoff blocks keep their order.
+    6. **Legend**: three origin swatches, each naming its groups.
+  - **Labels**:
+    - `agent:context.group.<key>` and `agent:context.part.<key>`;
+    - `tool`, `call` and `result` parts show the tool name;
+    - a `block` part maps the known `block.*` keys to `agent:context.block.<name>`, where `<name>`
+      is the key without `block.`, because i18next splits keys on dots. The names are `settings`,
+      `canon_systems`, `writing_skills`, `memory`, `recent_chapters`, `goals`, `chapter_draft`,
+      `cast_index`, `chapter_diff`, `book_brief` and `book_index`. `assistant.kickoff` reads
+      **First message** (the book agent's kickoff wraps the author's first message). Any other key
+      reads **Task**, and a block without `source` reads "Block *n*" by kickoff position.
+  - **Numbers**: displayed tokens are `round(estimate × scale)` through `formatNumber`. A share is
+    always of the whole request (`estimate / total`), also when zoomed.
 
 ### 5.4 Conception studio
 Two panes: conversation (the same `ActivityStream` and `Composer` components) and documents
 (tabs Outline / Characters / World / Protagonist / Research topics). Documents update live from
 `write_setting_doc` previews and `settings.changed` events. They are editable when the session is
 not running. `CharacterRankList` uses dnd-kit sortable (reorder → `POST characters/reorder`).
-"Finalize book" lives in the documents pane footer.
+"Finalize book" lives in the documents pane footer. The conversation header carries
+`ContextButton` for the conception session (§5.3, D-171).
 
 **Before conception** (D-158, D-168). While the book has no conception session, the conversation
 pane shows the research before conception (`PreConceptionResearch`). It is built from the
@@ -613,6 +690,21 @@ mirrors spec/03 §4 step 1. The `model.effort_unsupported` creation warning show
   canon, session, and research status to a token, a Lucide icon, and an i18n label. The research
   status `deferred` uses the `idle` token (nothing is running and nothing is waiting on the agent)
   with its own label, `chapter:status.deferred` (D-138).
+- **Context origin tokens** (D-171, `index.css`, both themes, exposed as `bg-context-setup` etc.):
+
+  | Token | Light | Dark | Groups |
+  |---|---|---|---|
+  | `--context-setup` | `#2a78d6` | `#3987e5` | system, tools, kickoff |
+  | `--context-messages` | `#eb6834` | `#d95926` | author, runtime |
+  | `--context-work` | `#1baf7a` | `#199e70` | model, results |
+
+  - Any two treemap groups can touch, so the hues were checked on **all pairs**. Seven hues fail
+    that check, so the three origins carry color and the group labels carry identity. With the
+    dataviz validator on `#ffffff` / `#0a0a0a`, the worst all-pairs values are CVD ΔE 9.2 / 9.4
+    and normal-vision ΔE 24.0 / 20.9.
+  - The light aqua is 2.82:1 against the surface, so labels stay visible and the list view
+    exists.
+  - In-fill labels are `#ffffff` in both themes. Other chart text uses text tokens.
 - **Fonts**: UI uses the scaffold's Geist with the fallback `"PingFang SC", "Microsoft YaHei",
   "Noto Sans SC", sans-serif`. Prose serif stack: `"Noto Serif SC", "Source Han Serif SC",
   "Songti SC", "SimSun", serif`. Fonts are not bundled.
@@ -647,6 +739,28 @@ test imports the file by relative path).
   `agent:session_title.<kind>` key, in both locales (these keys are built dynamically, so
   `check-i18n` cannot see them).
 - `check-i18n` runs in `scripts/check.sh`.
+- Context view (D-171):
+  - `lib/treemap.ts`:
+    - areas proportional to the weights;
+    - rects inside the bounds and not overlapping;
+    - zero weights skipped;
+    - deterministic;
+    - the Bruls et al. reference case (6, 6, 4, 3, 2, 2, 1 in 6 × 4) yields the paper's layout;
+  - `ContextDialog`:
+    - group labels;
+    - the three header-line sources and the pending note;
+    - a strip column fetches `?seq=`, the strip keeps reading the current query, and the strip
+      keyboard works;
+    - zoom by click, Enter, Escape and the breadcrumb, with the path kept across requests;
+    - Escape while zoomed does not close the dialog, and at the top it does;
+    - an estimated request's column uses `estimate`;
+    - a group label only when it fits, and shares of the whole when zoomed;
+    - the list view sorts and folds "n more";
+    - "Block 2", **First message** and **Task** labels;
+  - the footer, studio and research-page entry points;
+  - a `session.message` invalidates only its own session's current query, and no session event
+    refetches a past view;
+  - every `ContextGroupKey`, `ContextPartKey` and known block key has keys in both locales.
 - Canon systems (D-150): toggles save with the form; the navigator and QuickSwitch hide and show
   entries; retained counts and the Memory-off warning render; a disabled page shows its banner and
   **Turn on** works.

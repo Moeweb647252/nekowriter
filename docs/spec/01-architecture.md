@@ -153,6 +153,7 @@ src/
 │   ├── context/         # kickoff builders per session kind, block renderers
 │   ├── request.rs       # neutral history → nekowriter_llm::ChatRequest
 │   ├── preview.rs       # streaming partial-JSON string field extractor
+│   ├── breakdown.rs     # what fills one request, for the context view (spec/03 §13.1, D-171)
 │   ├── roles.rs         # role → tool list, permitted tools per phase
 │   └── tools/           # tool trait, registry, implementations grouped by area
 ├── search/              # index schema mgmt, fts (jieba), vec (sqlite-vec), hybrid query, indexer

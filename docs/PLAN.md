@@ -228,6 +228,18 @@ needed. Real providers are tested when the author supplies keys.
       entry.
     - **Delete** is disabled on an entry with sub-entries. Deleting a leaf and reverting it brings
       it back under its parent.
+18. Context view (M23, plan §6):
+    - Demo, a book with an approved chapter 1: outline chapter 2, approve the outline, and write
+      it. Open **Context** from the footer. The setup groups fill most of the view: system prompt,
+      tools, and a kickoff with **Setting materials**, **Memory**, **Recent chapters**, **Chapter
+      draft** and **Task**. The header says **Estimate**.
+    - After a few steps, **Model output** and **Tool results** grow and the strip gains columns.
+      An early column shows less, and **Current** stays outlined.
+    - Zoom into **Tool results**, then into a tool; Escape returns, and Escape at the top closes
+      the dialog. **List** shows the same numbers.
+    - A steering message sent while the agent runs appears under **From the author** once
+      delivered.
+    - **Context** also opens from the conception studio and from a research task page.
 
 ## M12 — Outline and write sessions
 
@@ -392,3 +404,16 @@ agent reuses and adds `update_foreshadowing` to its list. Execute in order, one 
 | 22.5 | **Goals, context and prompts**: `event_occurred` in the evaluator and validation; `memory.counts.event_planned`; the planned and anchor markers in results and `block.goals`; `block.canon_systems`; `conception.system`, `archivist.system`, the seed, maintenance and re-sync tasks, `tools.toml`; variables, samples, validator. | 06 §4.4, §6–§8, §10.3, §11.3; 08 §5; 09 §2 | plan §5.4; `prompts_registry` snapshots; each `kickoff_baseline` change justified |
 | 22.6 | **Web**: the timeline tree, row menu and dialog fields; foreshadowing anchors and picker; the **Event happened** condition; both locales. | 11 §5.5, §9; PROJECT §8.8 | plan §5.5 Vitest; `i18n:check` |
 | 22.7 | **Smoke and pre-ship**: smoke item 17 with the Demo provider. Run `0013` on a **copy** of the author's database; report the guard counts, the root id, that the 3 rows are top level and `occurred`, and that the 12 foreshadowing rows are unanchored with their text unchanged. | PLAN §M11.5 | the checklist passes; the report is in the final message and in D-170's consequences |
+
+## M23 — Context view
+
+Plan: `docs/research/context-treemap-plan.md` (D-171). It follows M22 and covers the session kinds
+and tools of M21 and M22. Execute in order, one commit per task.
+
+| # | Task | Spec | Tests / acceptance |
+|---|---|---|---|
+| 23.1 | **Docs**: done with the plan (D-171). Re-read the amended sections; fix any a code fact contradicts and note it in D-171. | plan §7 | `check.sh` green (docs only) |
+| 23.2 | **Block sources and one estimator**: `StoredBlock::Text.source`, set by both kickoff loops (block key) and by `text_blocks` (`edit_report`, `inbox.<kind>`); `None` everywhere else; never sent; binding. Re-export `nekowriter_llm::estimate_tokens`; `kickoff_too_large` uses it and drops its private `is_cjk`. | 02 §4; 03 §10; 04 §2 | plan §5.1; `kickoff_baseline` unchanged |
+| 23.3 | **Breakdown and API**: `agent/breakdown.rs` (pure: rebuild, classification, appendices, replay rule, scale, caps, `rollover_at`), the loader (ordered pool reads, no transaction), `rollover_eligible`, `GET /sessions/:id/context`, the DTOs, `SessionDto.context_window`, bindings. | 03 §13.1; 10 §2.7, §2.8 | plan §5.2 `context_breakdown.rs`; spec/03 §15 #36 |
+| 23.4 | **Web**: `lib/treemap.ts` (squarified); `ContextButton`, `ContextDialog`, `RequestStrip`, `ContextTreemap`, the list view; the footer, studio and research-page entries; the origin tokens; `keys.sessions.context` and the SSE invalidation; both locales. | 11 §2, §4.2, §5.3, §5.4, §7, §9; PROJECT §6.19, §8.6 | plan §5.3 Vitest; `i18n:check` |
+| 23.5 | **Smoke**: smoke item 18 with the Demo provider. | PLAN §M11.5 | the checklist passes |

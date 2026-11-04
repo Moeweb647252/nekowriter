@@ -159,6 +159,7 @@ carries `{ status, operation }`; a task with an open session reports
 | GET | `/books/:id/sessions` | `?kind&status&chapter_id` | `SessionDto[]` |
 | GET | `/sessions/:id` | | `SessionSnapshotDto { session, messages (last 200), tool_calls (of those messages), inbox (unconsumed author messages, oldest first), inbox_pending (count of every unconsumed inbox row, including notices), system_prompt, tool_names, next_cursor }` (the frozen prompt and tool list are shown in the session info popover) |
 | GET | `/sessions/:id/messages` | `?cursor&limit` (the cursor from the snapshot or the previous page; older first) | `{ items: { message, tool_calls }[], next_cursor }` for scrollback |
+| GET | `/sessions/:id/context` | `?seq` (an assistant message's `seq`: the request that produced it; absent = the current context) | `ContextBreakdownDto` (spec/03 §13.1, D-171). Read-only, any status. A `seq` that is not an assistant message of the session → `400 validation.failed` (`details.fields.seq`) |
 | POST | `/sessions/:id/pause` · `/resume` `{feedback?}` · `/stop` · `/continue` · `/abandon` | | `SessionDto` (validated against spec/03 §3; e.g. `stop` only while `running`) |
 | POST | `/sessions/:id/message` | `{ text }` | `SessionDto` |
 | POST | `/sessions/:id/answer` | `{ tool_call_id, payload }` | `SessionDto` |
@@ -175,6 +176,7 @@ type SessionDto = {
   chapter_number: number | null; research_topic: string | null;   // data for the UI-composed title
   research_task_kind: ResearchTaskKind | null;   // "preparation" → the "Knowledge check" title (D-158)
   model_label: string;
+  context_window: number;           // from model_snapshot, for the footer's Context share (D-171)
   effort: string | null;            // the frozen thinking effort from model_snapshot (spec/04 §5.1, D-162)
   status: SessionStatus; phase: Phase; granularity: Granularity | null;
   auto_pause: boolean; pause_after_outline: boolean; pause_requested: boolean;
@@ -204,6 +206,39 @@ type ToolCallDto = {
   // approval will write. Null once the call is finalized.
   pending_outline: { outline: string; reference_notes: string; title: string | null } | null;
   created_at: string; finished_at: string | null;
+};
+// GET /sessions/:id/context (spec/03 §13.1, D-171). Tokens are heuristic estimates; the UI shows
+// round(estimate × scale).
+type ContextBreakdownDto = {
+  session_id: number;
+  seq: number | null;               // the assistant message whose request is shown; null = current
+  context_window: number; max_output_tokens: number;
+  rollover_at: number | null;       // prompt size at which this session renews (spec/03 §9)
+  estimate: number;                 // sum of every leaf
+  measured: number | null;          // the provider's prompt total for this request
+  cached: number | null;            // its cached input tokens
+  scale: number;                    // provider tokens per estimated token; 1 when uncalibrated
+  calibrated: boolean;
+  pending_calls: number;            // current context: calls with no result yet (not counted)
+  groups: ContextGroupDto[];        // fixed order; empty groups omitted
+  requests: ContextRequestDto[];    // every request of the session, oldest first
+};
+type ContextGroupKey = "system" | "tools" | "kickoff" | "author" | "runtime" | "model" | "results";
+type ContextPartKey = "system_prompt" | "tool" | "block" | "message" | "feedback" | "edit_report"
+  | "notice" | "effect_notice" | "nudge" | "text" | "reasoning" | "call" | "result";
+type ContextGroupDto = { key: ContextGroupKey; estimate: number; parts: ContextPartDto[] };
+type ContextPartDto = {
+  key: ContextPartKey;
+  name: string | null;              // tool name (tool, call, result) or block source (block)
+  estimate: number;
+  items: ContextItemDto[];          // largest first, at most 40
+  rest: { count: number; estimate: number } | null;
+};
+type ContextItemDto = { seq: number; call_index: number | null; estimate: number; excerpt: string };
+type ContextRequestDto = {
+  seq: number; prompt_tokens: number; cached_tokens: number; estimated: boolean;
+  estimate: number;                 // the heuristic total of that request (its own view's estimate)
+  created_at: string;
 };
 type ChapterDto = ChapterListItemDto & {
   guidance: string; outline: string; reference_notes: string; summary: string;

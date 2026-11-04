@@ -110,7 +110,9 @@ set, plus the extra headers.
   `prompt_tokens_details.cached_tokens` or DeepSeek `prompt_cache_hit_tokens`, and
   `completion_tokens_details.reasoning_tokens`. Mapping: `cached_input = cached`,
   `input = prompt_tokens − cached`, `output = completion_tokens`. When no usage arrives,
-  estimate (spec/03 §10 heuristic) and mark it `estimated: true`.
+  estimate (spec/03 §10 heuristic) and mark it `estimated: true`. The per-text estimator is
+  exported as `nekowriter_llm::estimate_tokens`. The server's kickoff warning and the context
+  breakdown use it too (spec/03 §13.1, D-171).
 - An `{"error": …}` object inside the stream → `LlmError::Provider`.
 
 ## 3. Anthropic adapter (`anthropic.rs`)

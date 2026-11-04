@@ -323,6 +323,17 @@ effort (one of the levels its model lists), configured globally and overridable 
 - One conversation per book is open at a time. **End conversation** closes it, and **New
   conversation** starts fresh.
 
+### 6.19 Context view
+- Every session can show **what fills its context** as a treemap: the system prompt, the tool
+  definitions, the kickoff (setting materials, memory, recent chapters, the task, …), what the
+  author said, runtime notices, the model's own output, and the tool results by tool.
+- It opens on the **current context**, i.e. what the next request will send. A strip of every
+  earlier request shows how the context grew, and selecting one shows that request.
+- Counts are estimates per part, scaled to the provider's own total when one is known, so the
+  total matches the provider and the shares show what takes the room. There is a list view with
+  the same numbers.
+- It only reads. History is never trimmed or edited from it (§3 principle 7).
+
 ---
 
 ## 7. User flows
@@ -787,7 +798,13 @@ version first.
   "Feedback & continue" (held or paused), "Reply" (idle conception), disabled with a reason
   otherwise (for example while a form waits for an answer, or while the held review block above
   owns the decision).
-- **Footer**: cumulative tokens (input, cached input, output) for the session.
+- **Footer**: cumulative tokens (input, cached input, output) for the session, and **Context**
+  with the share of the context window the last request used. It opens the context view (§6.19):
+  - a header with the total and the share of the window;
+  - the request strip;
+  - the treemap, with three colors for where text comes from (setup, messages, the agent's work)
+    and each group named on the chart where it fits;
+  - a list view.
 
 ### 8.7 Conception studio
 
@@ -820,6 +837,8 @@ version first.
   - **Start conception**, which asks for confirmation while research still runs.
 
   With no check, it offers **Start conception** and **Check knowledge first**.
+- The conversation header has **Context** (§6.19), as does a research task page's session
+  section.
 
 ### 8.8 Canon pages
 - **Entities**: a filter bar (kind chips, status, track, search, **+ Entity**) above a dense
@@ -975,6 +994,8 @@ the design target; ≥1024 px must remain usable).
 - Graph visualization of entities (list and detail views only).
 - Prompt lab or playground, prompt preview with live data, A/B testing.
 - Cost in currency or price tables (token counts only).
+- Exact per-part token counts from a bundled tokenizer, trimming or editing context, and a
+  book-wide context chart (the context view, §6.19, estimates parts per session and only reads).
 - Volumes or arcs as data objects, chapter branching, alternative versions as branches. Writing
   goals (§6.16) are intent records with an optional chapter range, not containers of chapters.
   Timeline entries (§6.7) group story events in story time; they hold no chapters and no chapter
@@ -1111,6 +1132,20 @@ The author can revise them later.
     On the review of the plan the author added two rulings. Planned entries and goals
     "complement each other" (a goal can wait for a planned entry to happen), and a happened entry
     may not be abandoned. Existing books are not converted automatically.
+36. **"A treemap of the tokens that make up the context"** (D-171). The author's request was
+    "我想做一个上下文 token 组成的矩形树图". Asked three questions, the author answered:
+    - a product feature in the agent panel, for every session;
+    - the current context by default, with every earlier request selectable;
+    - the first level grouped by content type.
+
+    Read as follows:
+    - Providers report only a total per request, so parts are estimated with the existing
+      heuristic and scaled to that total.
+    - Appendices count where they came from (the author or the runtime), not under the tool that
+      carried them.
+    - Kickoff blocks record their prompt key from now on, and older kickoffs show numbered blocks.
+    - Any two groups can sit side by side, and seven hues cannot all be told apart that way, so
+      color shows three origins and the groups are named on the chart.
 
 ## 11. Requirement traceability
 
@@ -1135,4 +1170,5 @@ The author can revise them later.
 | Writing goals | §6.16, F6, F7, F12 | `spec/06` §11, `spec/05` (`propose_goal_change`), `spec/03` §10, `spec/10` §2.4 |
 | Canon system switches | §6.17, F7 | `spec/06` §10, `spec/05` §2, `spec/03` §1.2, §4, §10 |
 | Book agent | §6.18, F13 | `spec/08` §8, `spec/05` §10, `spec/03` §5.2 (approval hold), §6, `spec/10` §2.2, §2.7, `spec/11` §5.3, D-169 |
+| Context view | §6.19, §8.6 | `spec/03` §13.1, `spec/10` §2.7, `spec/11` §5.3, §7, D-171 |
 | Software stack and i18n | §6.15 | `spec/01-architecture.md`, `spec/11-frontend.md` |
