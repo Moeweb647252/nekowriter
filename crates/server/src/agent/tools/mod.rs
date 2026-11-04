@@ -85,6 +85,8 @@ pub enum ToolErrorKind {
     ChapterLocked,
     SystemOff,
     GoalOpenChildren,
+    SessionConflict,
+    StartRefused,
     NoKnowledgeScope,
     ScopeExcluded,
     TargetScopeUnset,
@@ -133,6 +135,8 @@ impl ToolErrorKind {
             ToolErrorKind::ChapterLocked => "chapter_locked",
             ToolErrorKind::SystemOff => "system_off",
             ToolErrorKind::GoalOpenChildren => "goal_open_children",
+            ToolErrorKind::SessionConflict => "session_conflict",
+            ToolErrorKind::StartRefused => "start_refused",
             ToolErrorKind::NoKnowledgeScope => "no_knowledge_scope",
             ToolErrorKind::ScopeExcluded => "scope_excluded",
             ToolErrorKind::TargetScopeUnset => "target_scope_unset",
@@ -612,6 +616,8 @@ mod tests {
             ToolErrorKind::ChapterLocked,
             ToolErrorKind::SystemOff,
             ToolErrorKind::GoalOpenChildren,
+            ToolErrorKind::SessionConflict,
+            ToolErrorKind::StartRefused,
             ToolErrorKind::ExactlyOne,
             ToolErrorKind::MutuallyExclusive,
             ToolErrorKind::ToolNotAllowed,
@@ -623,7 +629,7 @@ mod tests {
         .iter()
         .map(|kind| kind.code())
         .collect();
-        assert_eq!(codes.len(), 40);
+        assert_eq!(codes.len(), 42);
         let unique: std::collections::BTreeSet<&str> = codes.iter().copied().collect();
         assert_eq!(unique.len(), codes.len(), "codes must be unique");
         assert!(codes.contains(&"after_completion"));

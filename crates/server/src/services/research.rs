@@ -670,7 +670,10 @@ pub async fn run(state: &AppState, task_id: i32) -> Result<i32, AppError> {
 
 /// The scope of a run: the existing one by name, or a new one attached to the linked book
 /// (spec/07 §8 step 2).
-async fn prepare_scope(tx: &impl ConnectionTrait, task_id: i32) -> Result<Option<i32>, AppError> {
+pub(crate) async fn prepare_scope(
+    tx: &impl ConnectionTrait,
+    task_id: i32,
+) -> Result<Option<i32>, AppError> {
     let task = load(tx, task_id).await?;
     // Running is refused while a session is open (spec/07 §8 step 1).
     if is_open(&task) {

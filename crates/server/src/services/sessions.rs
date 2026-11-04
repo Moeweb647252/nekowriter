@@ -1275,12 +1275,17 @@ pub async fn resume(
     let db = state.db().clone();
     let state_owned = state.clone();
     let feedback = input.feedback.clone();
-    let (events, dto) = services::write(&db, move |tx| {
+    let (events, spawns, dto) = services::write(&db, move |tx| {
         let feedback = feedback.clone();
         Box::pin(async move { resume_inner(&state_owned, tx, session_id, feedback).await })
     })
     .await?;
     resume_after(state, events, session_id).await;
+    // An approved `start_session` creates its child in the approving transaction; spawning here
+    // is after that transaction committed (D-169).
+    for child in spawns {
+        state.manager().spawn(state.clone(), child);
+    }
     Ok(dto)
 }
 
@@ -1290,7 +1295,7 @@ async fn resume_inner(
     tx: &sea_orm::DatabaseTransaction,
     session_id: i32,
     feedback: Option<String>,
-) -> Result<(Vec<ServerEvent>, crate::api::dto::SessionDto), AppError> {
+) -> Result<(Vec<ServerEvent>, Vec<i32>, crate::api::dto::SessionDto), AppError> {
     let session = session::load(tx, session_id).await?;
     let status = session::status_of(&session);
     let mut events = Vec::new();
@@ -1315,7 +1320,7 @@ async fn resume_inner(
                     .map(str::trim)
                     .is_some_and(|text| !text.is_empty());
                 if !has_feedback {
-                    let mut events =
+                    let (mut events, spawns) =
                         runner::approve_held_call(tx, state, &session, &held, &prompts).await?;
                     events.push(ServerEvent::SessionUpdated {
                         session: session::to_dto(
@@ -1328,6 +1333,7 @@ async fn resume_inner(
                     });
                     return Ok((
                         events,
+                        spawns,
                         session::to_dto(tx, &session::load(tx, session_id).await?, Vec::new())
                             .await?,
                     ));
@@ -1384,6 +1390,7 @@ async fn resume_inner(
                             warnings: Vec::new(),
                         },
                     ],
+                    Vec::new(),
                     dto,
                 ));
             }
@@ -1565,6 +1572,7 @@ async fn resume_inner(
     }
     Ok((
         events,
+        Vec::new(),
         session::to_dto(tx, &session::load(tx, session_id).await?, Vec::new()).await?,
     ))
 }

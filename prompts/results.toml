@@ -42,6 +42,10 @@ text = '''
 档案系统「{{ system }}」已关闭，不能执行该操作。
 {%- elif code == "goal_open_children" -%}
 目标 #{{ node }} 仍有未完成的子节点；如确认要完成它，请带上 confirm_open_children=true 重试。
+{%- elif code == "session_conflict" -%}
+会话 #{{ session_id }} 仍在运行，不能启动会打断它的新会话。请等待它结束，或用 list_sessions 查看。
+{%- elif code == "start_refused" -%}
+这个会话不能启动（原因：{{ reason }}）。请调整后重试。
 {%- elif code == "no_knowledge_scope" -%}
 本书没有可检索的知识库范围。
 {%- elif code == "scope_excluded" -%}
@@ -568,4 +572,16 @@ title_en = "Result — book-agent write"
 title_zh = "工具结果 · 书代理写入"
 text = '''
 {{ summary }}{% if details %}（{{ details }}）{% endif %}
+'''
+
+
+[[prompt]]
+key = "result.session_start"
+kind = "result"
+agent = "assistant"
+vars = ["session_id", "kind", "existing"]
+title_en = "Result — session start"
+title_zh = "结果 · 启动会话"
+text = '''
+{% if existing %}已继续会话 #{{ session_id }}（{{ kind }}）。{% else %}已启动会话 #{{ session_id }}（{{ kind }}）。{% endif %}
 '''

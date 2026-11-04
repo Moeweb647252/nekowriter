@@ -3,7 +3,7 @@
 //! Previews compute the same before/after as `execute` without writing. The approval path runs
 //! `prepare` again before `execute`, so chapter locks are checked against current data.
 
-use sea_orm::{ColumnTrait, EntityTrait, QueryFilter};
+use sea_orm::{ActiveModelTrait, ColumnTrait, EntityTrait, QueryFilter};
 use serde::Deserialize;
 use serde_json::{Value, json};
 
@@ -11,9 +11,13 @@ use crate::api::dto::chapters::{ChapterContentTextPut, ChapterInput, ChapterPatc
 use crate::api::dto::goals::{GoalNodeInput, GoalNodePatch};
 use crate::api::dto::knowledge::EntryInput;
 use crate::api::dto::research::{ResearchTaskCreate, ResearchTaskPatch};
-use crate::db::entities::chapters;
-use crate::db::json::{ChapterContent, GoalCondition, GoalStatus, ResearchTaskStatus};
+use crate::db::entities::{agent_sessions, chapters, research_tasks};
+use crate::db::json::{
+    CanonStatus, ChapterContent, ChapterStatus, GoalCondition, GoalStatus, ResearchTaskStatus,
+    SessionKind, SessionStatus,
+};
 use crate::services::canon::{CanonWrite, Visibility as CanonVisibility};
+use crate::services::maintenance::{last_archivist_kind, open_archivist_session};
 use crate::services::research::Transition;
 use crate::services::{
     chapters as chapter_service, goals as goal_service, knowledge, research, versions,
@@ -973,6 +977,428 @@ impl ToolHandler for AddKnowledgeEntryTool {
     }
 }
 
+#[derive(Debug, Deserialize)]
+struct StartSessionInput {
+    action: String,
+    #[serde(default)]
+    chapter: Option<String>,
+    #[serde(default)]
+    task: Option<i32>,
+    #[serde(default)]
+    guidance: Option<String>,
+}
+
+pub struct StartSessionTool;
+
+#[async_trait::async_trait]
+impl ToolHandler for StartSessionTool {
+    fn name(&self) -> &'static str {
+        "start_session"
+    }
+    fn kind(&self) -> ToolKind {
+        ToolKind::Control
+    }
+
+    async fn execute(
+        &self,
+        ctx: &mut ToolCtx<'_>,
+        input: Value,
+        _prepared: Prepared,
+    ) -> Result<ToolOutcome, ToolError> {
+        let input: StartSessionInput = decode(input)?;
+        let book_id = book_id(ctx)?;
+        let chapter = input
+            .chapter
+            .as_deref()
+            .map(str::trim)
+            .filter(|v| !v.is_empty());
+        if input.task.is_some() && input.action != "research" {
+            return Err(validation("task is only valid for research"));
+        }
+        if input.guidance.is_some()
+            && !matches!(input.action.as_str(), "outline" | "knowledge_check")
+        {
+            return Err(validation(
+                "guidance is only valid for outline and knowledge_check",
+            ));
+        }
+        match input.action.as_str() {
+            "outline" | "maintain" | "resync" => {
+                let chapter =
+                    chapter.ok_or_else(|| validation("chapter is required for this action"))?;
+                let chapter = resolve_chapter(ctx, book_id, chapter).await?;
+                match input.action.as_str() {
+                    "outline" => start_outline(ctx, &chapter, input.guidance).await,
+                    "maintain" => start_maintain(ctx, &chapter).await,
+                    "resync" => start_resync(ctx, &chapter).await,
+                    _ => unreachable!(),
+                }
+            }
+            "research" => {
+                let task = input
+                    .task
+                    .ok_or_else(|| validation("task is required for research"))?;
+                start_research(ctx, task).await
+            }
+            "knowledge_check" => {
+                let focus = input.guidance.unwrap_or_default().trim().to_owned();
+                if focus.is_empty() {
+                    return Err(validation("guidance is required for knowledge_check"));
+                }
+                let (task, session_id, warnings, events) =
+                    research::start_knowledge_check(ctx.state, ctx.tx, book_id, focus)
+                        .await
+                        .map_err(map_start_error)?;
+                ctx.events.extend(events);
+                session_start_outcome(
+                    ctx,
+                    session_id,
+                    SessionKind::Research,
+                    false,
+                    warnings,
+                    Some(task.id),
+                )
+            }
+            other => Err(validation(&format!("unsupported action {other}"))),
+        }
+    }
+
+    async fn preview(&self, _ctx: &mut ToolCtx<'_>, input: Value) -> Result<Value, ToolError> {
+        let input: StartSessionInput = decode(input)?;
+        let target = input
+            .chapter
+            .as_deref()
+            .or(if input.task.is_some() {
+                Some("task")
+            } else {
+                None
+            })
+            .unwrap_or("");
+        Ok(
+            json!({"kind":"action","label":"start_session","text":format!("启动 {} {}", input.action, target)}),
+        )
+    }
+}
+
+fn map_start_error(error: crate::error::AppError) -> ToolError {
+    if error.code == crate::error::ErrorCode::ChapterSessionExists {
+        return ToolError::new(ToolErrorKind::SessionConflict).with(
+            "session_id",
+            error
+                .details
+                .as_ref()
+                .and_then(|d| d.get("session_id"))
+                .and_then(Value::as_i64)
+                .unwrap_or(0),
+        );
+    }
+    ToolError::new(ToolErrorKind::StartRefused)
+        .with("reason", error.code.as_str())
+        .with("details", error.details.unwrap_or(Value::Null))
+}
+fn map_conflict(session_id: i32) -> ToolError {
+    ToolError::new(ToolErrorKind::SessionConflict).with("session_id", session_id)
+}
+fn session_start_outcome(
+    ctx: &mut ToolCtx<'_>,
+    session_id: i32,
+    kind: SessionKind,
+    existing: bool,
+    warnings: Vec<String>,
+    task_id: Option<i32>,
+) -> Result<ToolOutcome, ToolError> {
+    let rendered = ctx
+        .prompts
+        .render_value(
+            "result.session_start",
+            crate::prompts::template_value(&json!({
+                "session_id": session_id, "kind": kind, "existing": existing, "warnings": warnings,
+            })),
+        )
+        .map_err(|_| internal())?;
+    let mut outcome = ToolOutcome::text(rendered.text).with_ui(json!({
+        "session_id": session_id, "kind": kind, "existing": existing, "task_id": task_id,
+    }));
+    if !existing {
+        outcome.spawn.push(session_id);
+    }
+    Ok(outcome)
+}
+
+async fn start_outline(
+    ctx: &mut ToolCtx<'_>,
+    chapter: &chapters::Model,
+    guidance: Option<String>,
+) -> Result<ToolOutcome, ToolError> {
+    if chapter.status == ChapterStatus::Official {
+        return Err(map_start_error(crate::error::AppError::new(
+            crate::error::ErrorCode::ChapterInvalidState,
+            "official chapter",
+        )));
+    }
+    if let Some(id) = crate::services::open_planner_session(ctx.tx, chapter.id)
+        .await
+        .map_err(|_| internal())?
+    {
+        return Err(map_conflict(id));
+    }
+    if let Some(id) = crate::services::open_writer_session(ctx.tx, chapter.id)
+        .await
+        .map_err(|_| internal())?
+    {
+        return Err(map_conflict(id));
+    }
+    if let Some(details) = chapter_service::previous_chapter_blocker(ctx.tx, chapter)
+        .await
+        .map_err(|_| internal())?
+    {
+        return Err(ToolError::new(ToolErrorKind::StartRefused)
+            .with("reason", "chapter.previous_not_ready")
+            .with("details", details));
+    }
+    let (session_id, events, warnings) = crate::services::sessions::create_inner(
+        ctx.state,
+        ctx.tx,
+        crate::services::sessions::CreateSession {
+            kind: SessionKind::ChapterOutline,
+            book_id: Some(chapter.book_id),
+            chapter_id: Some(chapter.id),
+            guidance,
+            chapter_guard: true,
+            force_previous: false,
+            ..Default::default()
+        },
+    )
+    .await
+    .map_err(map_start_error)?;
+    ctx.events.extend(events);
+    session_start_outcome(
+        ctx,
+        session_id,
+        SessionKind::ChapterOutline,
+        false,
+        warnings,
+        None,
+    )
+}
+
+async fn start_maintain(
+    ctx: &mut ToolCtx<'_>,
+    chapter: &chapters::Model,
+) -> Result<ToolOutcome, ToolError> {
+    if chapter.status != ChapterStatus::Official {
+        return Err(map_start_error(crate::error::AppError::new(
+            crate::error::ErrorCode::ChapterInvalidState,
+            "not official",
+        )));
+    }
+    if !matches!(
+        chapter.canon_status,
+        CanonStatus::Pending | CanonStatus::Failed
+    ) {
+        return Err(map_start_error(crate::error::AppError::new(
+            crate::error::ErrorCode::ChapterInvalidState,
+            "canon not maintainable",
+        )));
+    }
+    if let Some(open) = open_archivist_session(ctx.tx, chapter.id)
+        .await
+        .map_err(|_| internal())?
+    {
+        return Err(map_conflict(open.id));
+    }
+    let kind = last_archivist_kind(ctx.tx, chapter.id)
+        .await
+        .map_err(|_| internal())?
+        .unwrap_or(SessionKind::ChapterMaintenance);
+    let (session_id, events, warnings) = crate::services::sessions::create_inner(
+        ctx.state,
+        ctx.tx,
+        crate::services::sessions::CreateSession {
+            kind,
+            book_id: Some(chapter.book_id),
+            chapter_id: Some(chapter.id),
+            ..Default::default()
+        },
+    )
+    .await
+    .map_err(map_start_error)?;
+    ctx.events.extend(events);
+    session_start_outcome(ctx, session_id, kind, false, warnings, None)
+}
+
+async fn start_resync(
+    ctx: &mut ToolCtx<'_>,
+    chapter: &chapters::Model,
+) -> Result<ToolOutcome, ToolError> {
+    if chapter.status != ChapterStatus::Official || chapter.canon_status != CanonStatus::Stale {
+        return Err(map_start_error(crate::error::AppError::new(
+            crate::error::ErrorCode::ChapterInvalidState,
+            "chapter is not stale official",
+        )));
+    }
+    if let Some(open) = open_archivist_session(ctx.tx, chapter.id)
+        .await
+        .map_err(|_| internal())?
+    {
+        return Err(map_conflict(open.id));
+    }
+    let content: ChapterContent = chapter.content.clone().into_inner();
+    let existing = crate::db::entities::chapter_versions::Entity::find()
+        .filter(
+            crate::db::entities::chapter_versions::COLUMN
+                .chapter_id
+                .eq(chapter.id),
+        )
+        .filter(
+            crate::db::entities::chapter_versions::COLUMN
+                .kind
+                .eq(crate::db::json::VersionKind::Official),
+        )
+        .all(ctx.tx)
+        .await
+        .map_err(|_| internal())?
+        .into_iter()
+        .find(|version| version.content.clone().into_inner() == content);
+    let version_id = if let Some(version) = existing {
+        version.id
+    } else {
+        let word_count = crate::text::content_word_count(&content);
+        versions::create_version(
+            ctx.tx,
+            versions::NewVersion {
+                chapter_id: chapter.id,
+                kind: crate::db::json::VersionKind::Official,
+                title: &chapter.title,
+                content: &content,
+                word_count,
+                note: "",
+                session_id: None,
+            },
+        )
+        .await
+        .map_err(|_| internal())?
+        .id
+    };
+    chapters::ActiveModel {
+        id: sea_orm::Set(chapter.id),
+        official_version_id: sea_orm::Set(Some(version_id)),
+        updated_at: sea_orm::Set(crate::services::now()),
+        ..Default::default()
+    }
+    .update(ctx.tx)
+    .await
+    .map_err(|_| internal())?;
+    let (session_id, events, warnings) = crate::services::sessions::create_inner(
+        ctx.state,
+        ctx.tx,
+        crate::services::sessions::CreateSession {
+            kind: SessionKind::ChapterResync,
+            book_id: Some(chapter.book_id),
+            chapter_id: Some(chapter.id),
+            ..Default::default()
+        },
+    )
+    .await
+    .map_err(map_start_error)?;
+    ctx.events.extend(events);
+    session_start_outcome(
+        ctx,
+        session_id,
+        SessionKind::ChapterResync,
+        false,
+        warnings,
+        None,
+    )
+}
+
+async fn start_research(ctx: &mut ToolCtx<'_>, task_id: i32) -> Result<ToolOutcome, ToolError> {
+    let task = research::get(ctx.tx, task_id)
+        .await
+        .map_err(|_| internal())?;
+    if task.book_id != Some(book_id(ctx)?) {
+        return Err(ToolError::new(ToolErrorKind::NotFound)
+            .with("what_label", "research task".to_owned())
+            .with("id", task_id));
+    }
+    if task.status == ResearchTaskStatus::Running {
+        return Err(map_conflict(task.session_id.unwrap_or(0)));
+    }
+    if task.status == ResearchTaskStatus::Failed {
+        if let Some(session_id) = task.session_id {
+            agent_sessions::ActiveModel {
+                id: sea_orm::Set(session_id),
+                status: sea_orm::Set(SessionStatus::Running),
+                error: sea_orm::Set(None),
+                ..Default::default()
+            }
+            .update(ctx.tx)
+            .await
+            .map_err(|_| internal())?;
+            research_tasks::ActiveModel {
+                id: sea_orm::Set(task_id),
+                status: sea_orm::Set(ResearchTaskStatus::Running),
+                ..Default::default()
+            }
+            .update(ctx.tx)
+            .await
+            .map_err(|_| internal())?;
+            let mut outcome = session_start_outcome(
+                ctx,
+                session_id,
+                SessionKind::Research,
+                true,
+                Vec::new(),
+                Some(task_id),
+            )?;
+            outcome.spawn.push(session_id);
+            return Ok(outcome);
+        }
+        return Err(map_start_error(crate::error::AppError::new(
+            crate::error::ErrorCode::ResearchInvalidState,
+            "failed task has no session",
+        )));
+    }
+    if matches!(
+        task.status,
+        ResearchTaskStatus::Draft
+            | ResearchTaskStatus::Ready
+            | ResearchTaskStatus::Deferred
+            | ResearchTaskStatus::Done
+            | ResearchTaskStatus::Cancelled
+    ) {
+        let scope_id = research::prepare_scope(ctx.tx, task_id)
+            .await
+            .map_err(map_start_error)?;
+        let (session_id, events, warnings) = crate::services::sessions::create_inner(
+            ctx.state,
+            ctx.tx,
+            crate::services::sessions::CreateSession {
+                kind: SessionKind::Research,
+                book_id: task.book_id,
+                research_task_id: Some(task_id),
+                kickoff_extra: scope_id.map(|id| json!({"scope_id": id})),
+                ..Default::default()
+            },
+        )
+        .await
+        .map_err(map_start_error)?;
+        ctx.events.extend(events);
+        return session_start_outcome(
+            ctx,
+            session_id,
+            SessionKind::Research,
+            false,
+            warnings,
+            Some(task_id),
+        );
+    }
+    Err(map_start_error(crate::error::AppError::new(
+        crate::error::ErrorCode::ResearchInvalidState,
+        "research task cannot run",
+    )))
+}
+
 pub fn all() -> Vec<std::sync::Arc<dyn ToolHandler>> {
     vec![
         std::sync::Arc::new(CreateChapterTool),
@@ -985,5 +1411,6 @@ pub fn all() -> Vec<std::sync::Arc<dyn ToolHandler>> {
         std::sync::Arc::new(UpdateResearchTaskTool),
         std::sync::Arc::new(DeleteResearchTaskTool),
         std::sync::Arc::new(AddKnowledgeEntryTool),
+        std::sync::Arc::new(StartSessionTool),
     ]
 }

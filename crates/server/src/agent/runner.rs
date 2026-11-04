@@ -1176,18 +1176,24 @@ async fn step_tool(
             };
             let finalization = finalize_inner(tx, &session, &call, &mut outcome, &prompts).await?;
             domain_events.extend(finalization.events);
+            let spawns = finalization.spawn;
             // Canon writes by tools keep `search_docs`/`fts_book` in step inside this same
             // transaction (spec/07 §2); the agent path does not go through `canon::write`.
             crate::search::maintenance::sync_events(tx, &domain_events).await?;
             crate::search::index::wake();
-            Ok(domain_events)
+            Ok((domain_events, spawns))
         })
     })
     .await;
 
     match result {
-        Ok(events) => {
+        Ok((events, spawns)) => {
             state.events().publish_all(events);
+            // Sessions started by a tool are spawned only after the transaction that created
+            // them has committed (D-169); this includes the normal full-access path.
+            for session_id in spawns {
+                state.manager().spawn(state.clone(), session_id);
+            }
             // A completed research session advances its check's queue **after** the completion
             // transaction commits: its own write re-checks every condition and owns the session
             // spawn. A failure here is logged and never rolls back the completion.
@@ -1254,6 +1260,7 @@ async fn lookup_track(
 /// The result of finalizing a call.
 struct Finalization {
     events: Vec<ServerEvent>,
+    spawn: Vec<i32>,
 }
 
 /// Applies a staged chapter write in the transaction that finalizes its call (spec/03 §5.2, §5.4).
@@ -1541,7 +1548,7 @@ pub(crate) async fn approve_held_call(
     session: &agent_sessions::Model,
     held: &agent_tool_calls::Model,
     prompts: &PromptSet,
-) -> Result<Vec<ServerEvent>, AppError> {
+) -> Result<(Vec<ServerEvent>, Vec<i32>), AppError> {
     let handler = state
         .tool_registry()
         .get(&held.name)
@@ -1554,7 +1561,7 @@ pub(crate) async fn approve_held_call(
             outcome.effects.approval = false;
             let running = mark_approval_running(tx, session).await?;
             let finalization = finalize_inner(tx, &running, held, &mut outcome, prompts).await?;
-            return Ok(finalization.events);
+            return Ok((finalization.events, finalization.spawn));
         }
     };
     let book = lookup_book(tx, session).await?;
@@ -1590,7 +1597,7 @@ pub(crate) async fn approve_held_call(
     outcome.effects.approval = false;
     let running = mark_approval_running(tx, session).await?;
     let finalization = finalize_inner(tx, &running, held, &mut outcome, prompts).await?;
-    Ok(finalization.events)
+    Ok((finalization.events, finalization.spawn))
 }
 
 async fn mark_approval_running(
@@ -1843,7 +1850,10 @@ async fn finalize_inner(
         session: session::to_dto(tx, &reloaded, Vec::new()).await?,
         warnings: Vec::new(),
     });
-    Ok(Finalization { events })
+    Ok(Finalization {
+        events,
+        spawn: outcome.spawn.clone(),
+    })
 }
 
 /// The completion handler of a finalizing call (spec/03 §5.4, spec/08).

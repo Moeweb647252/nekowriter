@@ -547,7 +547,10 @@
     "proposals_omitted": 0,
     "action": "edit_chapter_text",
     "summary": "修改章节",
-    "details": "第1章"
+    "details": "第1章",
+    "session_id": 12,
+    "kind": "chapter_outline",
+    "existing": false
   },
   "variants": {
     "archivist.kickoff.maintenance": [
