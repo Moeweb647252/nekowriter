@@ -144,10 +144,11 @@ export function ContextTreemap({
       role="group"
       tabIndex={0}
       aria-label={t("agent:context.title")}
-      className="relative h-[420px] w-full overflow-hidden rounded-md border bg-muted/20 outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      className="relative h-[420px] w-full min-w-0 max-w-full overflow-hidden rounded-md border bg-muted/20 outline-none focus-visible:ring-2 focus-visible:ring-ring"
       onKeyDown={onKeyDown}
     >
       <svg
+        className="block max-w-full"
         width="100%"
         height="420"
         viewBox={`0 0 ${width} 420`}
