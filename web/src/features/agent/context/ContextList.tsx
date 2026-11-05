@@ -62,7 +62,7 @@ function ContextPartRows({ group, part, view, index }: { group: ContextGroupDto[
 export function ContextList({ view }: { view: ContextBreakdownDto }) {
   const { t } = useTranslation()
   return (
-    <div className="max-h-[420px] overflow-auto rounded-md border">
+    <div className="min-w-0 max-h-[420px] overflow-auto rounded-md border">
       <table className="w-full border-collapse text-sm">
         <thead className="sticky top-0 bg-background">
           <tr className="text-left text-xs text-muted-foreground">

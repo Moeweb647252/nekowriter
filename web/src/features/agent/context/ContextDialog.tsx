@@ -49,7 +49,10 @@ export function ContextDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-5xl" onEscapeKeyDown={(event) => {
+      <DialogContent
+        data-testid="context-dialog"
+        className="w-full max-w-[calc(100%-2rem)] min-w-0 sm:max-w-5xl"
+        onEscapeKeyDown={(event) => {
         if (zoom.part !== null) {
           event.preventDefault()
           setZoom({ group: zoom.group, part: null })
@@ -69,7 +72,7 @@ export function ContextDialog({
         ) : query.isError || data === undefined || data === null ? (
           <div className="py-10 text-center text-sm text-muted-foreground">{t("agent:context.empty")}</div>
         ) : (
-          <div className="space-y-3">
+          <div data-testid="context-scroll" className="min-w-0 space-y-3">
             <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm">
               <span className="font-medium">
                 {t("agent:context.header.tokens", { ns: "agent", estimate: formatNumber(displayTokens, i18n.language), percent, window: formatNumber(data.context_window, i18n.language) })}

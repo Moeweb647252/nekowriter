@@ -52,3 +52,11 @@ describe("ContextDialog", () => {
     expect(screen.queryByText("› From the author")).not.toBeInTheDocument()
   })
 })
+
+  it("uses the wide sm dialog width and keeps the treemap inside a min-w-0 wrapper", () => {
+    render(<ContextDialog sessionId={7} open onOpenChange={vi.fn()} />)
+    expect(screen.getByTestId("context-dialog")).toHaveClass("sm:max-w-5xl")
+    expect(screen.getByTestId("context-scroll")).toHaveClass("min-w-0")
+    expect(screen.getByTestId("context-treemap")).toHaveClass("min-w-0", "max-w-full")
+    expect(screen.getByTestId("context-treemap").querySelector("svg")).toHaveClass("max-w-full")
+  })
