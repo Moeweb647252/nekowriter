@@ -4260,6 +4260,16 @@ as before. The Demo provider now exercises the path spec/04 §7.2 describes, and
     `ToolCallDto.completes` lets the dock say a held write would finish the chapter.
   - The old card's strings go, and PROJECT §8.5 and F4b now describe the dock instead of the
     stale hold bar.
+  - **25.4 smoke (2026-11-05)**: exercised against the Demo provider on a private server and
+    database (`127.0.0.1:7886`, `target/tmp/m25-25.3/data`): the auto-pause-on held write showed
+    the one-input dock and round button; empty Enter approved and applied it, and typing
+    「更紧凑一点」 followed by Enter sent feedback and cleared/blurred the input. With auto-pause off,
+    a held keep-write state accepted 「保留我的版本，继续」; the live panel showed
+    「Pausing after this step…」 while a `pause {after_step:true}` was pending. Screenshots are under
+    `docs/screenshots/m25-smoke-*`. The Demo provider completed some runs too quickly to observe the
+    blur/resume and rapid focus/blur/send timing reliably in the browser; those paths, and the
+    stale-write drop, remain covered by the Vitest and server tests rather than being claimed as
+    live smoke observations. The old `PendingWriteDock` was absent.
 - **Spec**:
   - PROJECT §6.4, F4b, §8.5, §8.13, §10 (#37), §11;
   - spec/02 §1, §2;
