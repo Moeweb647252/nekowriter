@@ -8,19 +8,19 @@ import type { JsonValue } from "./serde_json/JsonValue";
 /**
  * One tool call (spec/10 §2.8).
  */
-export type ToolCallDto = { id: number, message_id: number, seq: number, call_index: number, name: string,
+export type ToolCallDto = { id: number, message_id: number, seq: number, call_index: number, name: string, 
 /**
  * Parsed input when it is valid JSON (spec/10 §2.8).
  */
-input?: JsonValue | null,
+input?: JsonValue | null, 
 /**
  * The raw argument text, truncated for display.
  */
-input_text: string, status: ToolCallStatus, is_error: boolean,
+input_text: string, status: ToolCallStatus, is_error: boolean, 
 /**
  * `raw_result_text` before sealing, `result_text` after (spec/03 §1.3).
  */
-result_text?: string | null, appendices: Array<Appendix>, ui?: JsonValue | null, sealed: boolean,
+result_text?: string | null, appendices: Array<Appendix>, ui?: JsonValue | null, sealed: boolean, 
 /**
  * The chapter text a held text-changing call has staged but not applied (spec/03 §5.2, D-139).
  *
@@ -28,12 +28,12 @@ result_text?: string | null, appendices: Array<Appendix>, ui?: JsonValue | null,
  * can preview a held write against the confirmed draft without a second endpoint. `None` once
  * the call is finalized, because the text is then in the chapter.
  */
-pending_content?: PendingContent | null,
+pending_content?: PendingContent | null, 
 /**
  * The staged outline of a held outline session's `submit_outline` (spec/03 §5.2, D-146).
  * Present only while the call is deferred; approval writes exactly this proposal.
  */
-pending_outline?: PendingOutline | null,
+pending_outline?: PendingOutline | null, 
 /**
  * True while a deferred call would complete the session if approved (D-173).
  */
