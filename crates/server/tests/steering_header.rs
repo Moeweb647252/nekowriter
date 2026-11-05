@@ -337,7 +337,10 @@ async fn paused_session_feedback_is_delivered_rendered() {
 
     let (status, body) = runtime
         .app
-        .post(&format!("/api/sessions/{session_id}/pause"), json!({}))
+        .post(
+            &format!("/api/sessions/{session_id}/pause"),
+            json!({ "after_step": true }),
+        )
         .await;
     assert_eq!(status, StatusCode::OK, "pause: {body}");
     runtime.wait_status(session_id, SessionStatus::Paused).await;

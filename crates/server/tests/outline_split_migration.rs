@@ -165,7 +165,7 @@ async fn pre_outline_database() -> (tempfile::TempDir, std::path::PathBuf) {
     db.conn()
         .execute_unprepared(
             "DELETE FROM seaql_migrations WHERE version IN \
-             ('m0004_outline_sessions','m0006_goals_and_switches','m0010_tool_error_limit','m0012_book_agent')",
+             ('m0004_outline_sessions','m0006_goals_and_switches','m0010_tool_error_limit','m0012_book_agent','m0014_step_pause')",
         )
         .await
         .expect("rewind to 0003");

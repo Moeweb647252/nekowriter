@@ -35,7 +35,11 @@ effort?: string | null, status: SessionStatus, phase: Phase, granularity?: Granu
 /**
  * The book agent's write mode; `None` for every other session kind (D-169).
  */
-write_mode?: WriteMode | null, pause_requested: boolean, held_tool_call_id?: number | null, base_content_version?: number | null, error?: SessionError | null, usage: Usage, counters: SessionCounters, parent_session_id?: number | null, 
+write_mode?: WriteMode | null, pause_requested: boolean, 
+/**
+ * A pause requested for after the current step (D-173).
+ */
+pause_after_step: boolean, held_tool_call_id?: number | null, base_content_version?: number | null, error?: SessionError | null, usage: Usage, counters: SessionCounters, parent_session_id?: number | null, 
 /**
  * `parent_session_id` of the child session, when this one was superseded by a rollover.
  */

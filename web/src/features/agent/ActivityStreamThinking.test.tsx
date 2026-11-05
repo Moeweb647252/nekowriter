@@ -65,6 +65,7 @@ function session(): SessionDto {
     auto_pause: false,
     pause_after_outline: false,
     pause_requested: false,
+    pause_after_step: false,
     held_tool_call_id: null,
     base_content_version: null,
     error: null,

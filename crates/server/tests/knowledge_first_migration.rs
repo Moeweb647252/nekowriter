@@ -757,6 +757,11 @@ async fn edited_0001_matches_the_chain_for_directly_created_tables() {
         .execute_unprepared(include_str!("../../migration/src/sql/0012_book_agent.sql"))
         .await
         .expect("apply the 0012 agent_sessions rebuild");
+    // 0014 appends the step-pause flag to the rebuilt table; apply the same addition.
+    raw.conn()
+        .execute_unprepared(include_str!("../../migration/src/sql/0014_step_pause.sql"))
+        .await
+        .expect("apply the 0014 agent_sessions addition");
     let raw_dump = schema_dump(raw.conn()).await;
 
     let chain_dir = tempfile::tempdir().expect("chain dir");

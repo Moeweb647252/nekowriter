@@ -30,6 +30,7 @@ const session = {
   auto_pause: false,
   pause_after_outline: false,
   pause_requested: false,
+    pause_after_step: false,
   held_tool_call_id: 1,
   error: null,
   usage: {},
@@ -54,6 +55,7 @@ function call(preview: unknown): ToolCallDto {
     appendices: [],
     ui: { preview: preview as never },
     sealed: false,
+    completes: false,
     created_at: "2026-01-01T00:00:00Z",
     finished_at: null,
   }

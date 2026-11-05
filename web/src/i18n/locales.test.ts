@@ -321,8 +321,8 @@ function hasTargetVariant(name: string): boolean {
 
   it("has a label for every chapter and canon status StatusBadge can render", () => {
     for (const [locale, table] of [
-      ["en", enChapter as Record<string, string>],
-      ["zh-CN", zhChapter as Record<string, string>],
+      ["en", enChapter as Record<string, unknown>],
+      ["zh-CN", zhChapter as Record<string, unknown>],
     ] as const) {
       for (const status of CHAPTER_STATUSES) {
         expect(table[`status.${status}`], `${locale} chapter:status.${status}`).toBeTypeOf(

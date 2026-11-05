@@ -16,7 +16,7 @@ use crate::agent::runner;
 use crate::agent::session::{self, TransitionCause};
 use crate::agent::tools::registry::{initial_phase, role_enum_of_kind, role_of_kind};
 use crate::api::dto::sessions::{
-    DebugEchoDto, InboxItemDto, MessagePageDto, ResumeInput, SessionAnswerInput,
+    DebugEchoDto, InboxItemDto, MessagePageDto, PauseInput, ResumeInput, SessionAnswerInput,
     SessionMessageInput, SessionPatch, SessionSnapshotDto,
 };
 use crate::db::entities::{
@@ -454,6 +454,7 @@ pub(crate) async fn create_inner(
         research_max_tool_calls: Set(limits.research_max_tool_calls),
         research_max_entries: Set(limits.research_max_entries),
         pause_requested: Set(false),
+        pause_after_step: Set(false),
         held_tool_call_id: Set(None),
         base_content_version: Set(base_content_version),
         pending_comment: Set(input.pending_comment.clone()),
@@ -1271,10 +1272,11 @@ async fn open_ids(
 pub async fn pause(
     state: &AppState,
     session_id: i32,
+    input: PauseInput,
 ) -> Result<crate::api::dto::SessionDto, AppError> {
     let db = state.db().clone();
     let events = services::write(&db, move |tx| {
-        Box::pin(async move { pause_inner(tx, session_id).await })
+        Box::pin(async move { pause_inner(tx, session_id, input).await })
     })
     .await?;
     publish(state, events.0).await;
@@ -1285,14 +1287,20 @@ pub async fn pause(
 async fn pause_inner(
     tx: &sea_orm::DatabaseTransaction,
     session_id: i32,
+    input: PauseInput,
 ) -> Result<(Vec<ServerEvent>, crate::api::dto::SessionDto), AppError> {
     let session = session::load(tx, session_id).await?;
     if session.status != SessionStatus::Running {
         return Err(invalid_state(&session, "pause"));
     }
+    if input.after_step && session.pause_requested {
+        // A hold pause is never weakened by a later step pause.
+        return Ok((Vec::new(), session::to_dto(tx, &session, Vec::new()).await?));
+    }
     agent_sessions::ActiveModel {
         id: Set(session_id),
         pause_requested: Set(true),
+        pause_after_step: Set(input.after_step),
         updated_at: Set(chrono::Utc::now()),
         ..Default::default()
     }
@@ -1322,9 +1330,12 @@ pub async fn resume(
     let db = state.db().clone();
     let state_owned = state.clone();
     let feedback = input.feedback.clone();
+    let keep_write = input.keep_write;
     let (events, spawns, dto) = services::write(&db, move |tx| {
         let feedback = feedback.clone();
-        Box::pin(async move { resume_inner(&state_owned, tx, session_id, feedback).await })
+        Box::pin(
+            async move { resume_inner(&state_owned, tx, session_id, feedback, keep_write).await },
+        )
     })
     .await?;
     resume_after(state, events, session_id).await;
@@ -1342,11 +1353,49 @@ async fn resume_inner(
     tx: &sea_orm::DatabaseTransaction,
     session_id: i32,
     feedback: Option<String>,
+    keep_write: bool,
 ) -> Result<(Vec<ServerEvent>, Vec<i32>, crate::api::dto::SessionDto), AppError> {
     let session = session::load(tx, session_id).await?;
     let status = session::status_of(&session);
     let mut events = Vec::new();
     match status {
+        SessionStatus::Running => {
+            if !session.pause_requested {
+                return Err(invalid_state(&session, "resume"));
+            }
+            let now = chrono::Utc::now();
+            let cleared = agent_sessions::Entity::update_many()
+                .set(agent_sessions::ActiveModel {
+                    pause_requested: Set(false),
+                    pause_after_step: Set(false),
+                    updated_at: Set(now),
+                    ..Default::default()
+                })
+                .filter(agent_sessions::COLUMN.id.eq(session_id))
+                .filter(agent_sessions::COLUMN.status.eq(SessionStatus::Running))
+                .filter(agent_sessions::COLUMN.pause_requested.eq(true))
+                .exec(tx)
+                .await?;
+            if cleared.rows_affected == 0 {
+                // The pause was cancelled or landed between our read and update. Handle the
+                // session by its current status instead of clearing something else.
+                return Box::pin(resume_inner(state, tx, session_id, feedback, keep_write)).await;
+            }
+            if let Some(feedback) = feedback
+                .as_deref()
+                .map(str::trim)
+                .filter(|text| !text.is_empty())
+            {
+                insert_inbox(tx, session_id, InboxKind::UserMessage, feedback).await?;
+            }
+            let updated = session::load(tx, session_id).await?;
+            let dto = session::to_dto(tx, &updated, Vec::new()).await?;
+            events.push(ServerEvent::SessionUpdated {
+                session: dto.clone(),
+                warnings: Vec::new(),
+            });
+            return Ok((events, Vec::new(), dto));
+        }
         SessionStatus::Held => {
             let Some(call_id) = session.held_tool_call_id else {
                 return Err(invalid_state(&session, "resume"));
@@ -1491,6 +1540,7 @@ async fn resume_inner(
                 .as_deref()
                 .map(str::trim)
                 .is_some_and(|text| !text.is_empty());
+            let keep_pending = keep_write && revoke && held_effects.pending_content.is_some();
             let now = chrono::Utc::now();
             let mut effects: crate::db::json::ToolEffects = held
                 .effects
@@ -1498,7 +1548,13 @@ async fn resume_inner(
                 .map(|value| value.into_inner())
                 .unwrap_or_default();
             if revoke {
+                let pending = if keep_pending {
+                    effects.pending_content.take()
+                } else {
+                    None
+                };
                 effects = crate::db::json::ToolEffects::default();
+                effects.pending_content = pending;
             }
             // A held text call's write was staged, not committed, so approving is what puts it in
             // the chapter (spec/03 §5.2, §5.4, D-139). Feedback cleared `effects` above, which is
@@ -2348,6 +2404,7 @@ async fn debug_session_inner(
         research_max_tool_calls: Set(limits.research_max_tool_calls),
         research_max_entries: Set(limits.research_max_entries),
         pause_requested: Set(false),
+        pause_after_step: Set(false),
         held_tool_call_id: Set(None),
         base_content_version: Set(match spec.chapter_id {
             Some(chapter_id) => chapters::Entity::find_by_id(chapter_id)
@@ -2599,6 +2656,7 @@ async fn debug_echo_inner(
         research_max_tool_calls: Set(limits.research_max_tool_calls),
         research_max_entries: Set(limits.research_max_entries),
         pause_requested: Set(false),
+        pause_after_step: Set(false),
         held_tool_call_id: Set(None),
         base_content_version: Set(None),
         pending_comment: Set(None),
@@ -2726,6 +2784,9 @@ async fn set_status(
         updated_at: Set(now),
         ..Default::default()
     };
+    // A transition into `running` never carries a stale step-pause request, even when the caller
+    // does not clear the hold-pause flag.
+    active.pause_after_step = Set(false);
     if clear_pause {
         active.pause_requested = Set(false);
     }

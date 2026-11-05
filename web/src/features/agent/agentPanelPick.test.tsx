@@ -26,6 +26,7 @@ const planner = {
   auto_pause: false,
   pause_after_outline: true,
   pause_requested: false,
+    pause_after_step: false,
   held_tool_call_id: null,
   base_content_version: null,
   error: null,

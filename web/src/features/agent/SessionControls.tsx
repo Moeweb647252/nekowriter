@@ -136,7 +136,11 @@ export function SessionControls({
             <TooltipTrigger asChild>
               <Button size="sm" variant="outline" disabled={busy} onClick={onPause}>
                 <Pause aria-hidden="true" />
-                {session.pause_requested ? t("agent:controls.pausing") : t("agent:controls.pause")}
+                {session.pause_after_step
+                  ? t("agent:controls.pausing_after_step")
+                  : session.pause_requested
+                    ? t("agent:controls.pausing")
+                    : t("agent:controls.pause")}
               </Button>
             </TooltipTrigger>
             <TooltipContent>{t("agent:controls.pause_hint")}</TooltipContent>

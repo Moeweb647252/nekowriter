@@ -2,7 +2,7 @@
  * The one held-call decision, wired to the resume mutation (PROJECT §8.6, spec/11 §5.2/§5.3, D-141).
  *
  * Both surfaces decide a held call: the agent panel's `HeldCallReview` and the draft pane's
- * `PendingWriteDock`. They must not drift in *behaviour*, so neither builds a payload — they call
+ * `WriterDock`. They must not drift in *behaviour*, so neither builds a payload — they call
  * this hook, which owns the two documented mutations and the busy flag. Only the wording differs
  * (the panel names the tool, the dock speaks about the draft).
  *

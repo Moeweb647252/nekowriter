@@ -6,8 +6,8 @@ use serde::Deserialize;
 
 use crate::agent::breakdown::ContextBreakdownDto;
 use crate::api::dto::sessions::{
-    DebugEchoDto, DebugEchoInput, MessagePageDto, ResumeInput, SessionAnswerInput, SessionDto,
-    SessionMessageInput, SessionPatch, SessionSnapshotDto,
+    DebugEchoDto, DebugEchoInput, MessagePageDto, PauseInput, ResumeInput, SessionAnswerInput,
+    SessionDto, SessionMessageInput, SessionPatch, SessionSnapshotDto,
 };
 use crate::db::json::{SessionKind, SessionStatus};
 use crate::error::AppResult;
@@ -88,8 +88,16 @@ pub async fn messages(
 pub async fn pause(
     State(state): State<AppState>,
     Path(session_id): Path<i32>,
+    body: Option<Json<PauseInput>>,
 ) -> AppResult<Json<SessionDto>> {
-    Ok(Json(sessions::pause(&state, session_id).await?))
+    Ok(Json(
+        sessions::pause(
+            &state,
+            session_id,
+            body.map(|Json(input)| input).unwrap_or_default(),
+        )
+        .await?,
+    ))
 }
 
 /// `POST /api/sessions/:id/resume`.

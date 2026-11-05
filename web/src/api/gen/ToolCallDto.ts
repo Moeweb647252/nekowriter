@@ -33,4 +33,8 @@ pending_content?: PendingContent | null,
  * The staged outline of a held outline session's `submit_outline` (spec/03 §5.2, D-146).
  * Present only while the call is deferred; approval writes exactly this proposal.
  */
-pending_outline?: PendingOutline | null, created_at: string, finished_at?: string | null, };
+pending_outline?: PendingOutline | null, 
+/**
+ * True while a deferred call would complete the session if approved (D-173).
+ */
+completes: boolean, created_at: string, finished_at?: string | null, };

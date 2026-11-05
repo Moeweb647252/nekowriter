@@ -36,6 +36,7 @@ function session(overrides: Partial<SessionDto>): SessionDto {
     auto_pause: false,
     pause_after_outline: false,
     pause_requested: false,
+    pause_after_step: false,
     held_tool_call_id: null,
     base_content_version: 0,
     error: null,
@@ -129,4 +130,10 @@ describe("SessionControls", () => {
     expect(screen.getByRole("button", { name: "Continue" })).toBeInTheDocument()
     expect(screen.queryByRole("button", { name: "Feedback…" })).not.toBeInTheDocument()
   })
+})
+
+it("labels a pending step pause as pausing after this step", () => {
+  renderControls(noop, { status: "running", pause_requested: false, pause_after_step: true })
+  expect(screen.getByRole("button", { name: "Pausing after this step…" })).toBeInTheDocument()
+  expect(screen.queryByRole("button", { name: "Pausing…" })).not.toBeInTheDocument()
 })

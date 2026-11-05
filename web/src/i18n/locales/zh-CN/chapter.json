@@ -136,14 +136,6 @@
   "delete.is_anchor": "本章是某些番外的时间锚点，暂时无法删除：",
   "delete.is_anchor_hint": "先把下面的番外改到别的锚点章节，再删除本章。",
   "delete.side_story_ref": "番外 #{{id}}",
-  "pending_title": "智能体写好了这段，应用吗？",
-  "pending_title_superseded": "智能体写的这段没有应用",
-  "pending_body": "高亮的段落是应用后会改变的部分。在你做出决定前，什么都不会写入。",
-  "pending_superseded_body": "智能体写完这段之后你改动了草稿（现在草稿是第 {{draft}} 版，智能体读到的是第 {{expected}} 版），所以它的文字不会被应用。选择继续，它会从你的草稿接着写。",
-  "pending_approve": "应用并继续",
-  "pending_continue": "不应用，继续",
-  "pending_request_changes": "提出修改",
-  "pending_request_changes_hint": "你的反馈会发给智能体，它会重写这段后继续。这段文字不会应用。",
   "pending_preview_note": "预览：高亮段落是智能体写的，还没有进入你的草稿。",
   "pending_live_words": "应用后 {{staged}} 字（当前 {{confirmed}} 字）",
   "word_count_projected": "智能体正文应用后的字数（仅为预览，尚未写入）",
@@ -171,5 +163,38 @@
   "send_back_dialog.write_outline": "去写细纲",
   "outline_dialog.guidance_placeholder": "可选。策划会在写细纲前读到这里。",
   "status.cancelled": "已取消",
-  "status.done": "已完成"
+  "status.done": "已完成",
+  "dock": {
+    "approve": "应用并继续",
+    "send": "发送",
+    "input_label": "给写作者留言",
+    "placeholder": {
+      "on_running": "给写作者留言；它会在下一步读到",
+      "held": "回车应用高亮文本 · 输入内容提出修改",
+      "held_keep": "回车应用高亮文本 · 输入意见；文本会保留",
+      "held_completes": "回车用高亮文本完成本章 · 输入意见继续写",
+      "superseded": "草稿已变化（v{{expected}} → v{{draft}}），这段文本不会应用 · 回车继续",
+      "on_paused": "回车继续 · 输入意见",
+      "off_running": "点击此处在本步结束后暂停写作者并给出意见",
+      "off_pausing": "本步结束后暂停…请输入意见",
+      "off_paused": "已暂停 · 可编辑正文或输入意见；点击草稿外继续",
+      "other_paused": "已暂停 · 输入意见，或从助手面板继续",
+      "panel_hold": "请在助手面板处理暂停的步骤",
+      "hidden": "给写作者留言"
+    },
+    "description": {
+      "on_running": "输入留言；写作者会在下一步读到。",
+      "held": "空输入按回车会应用高亮文本；输入内容则提出修改。",
+      "held_keep": "输入意见时保留并应用高亮文本。",
+      "held_completes": "批准后高亮文本会完成本章；输入意见则继续写。",
+      "superseded": "这段文本写入后草稿已变化，因此不会应用；回车继续。",
+      "on_paused": "回车继续；输入意见指导下一步。",
+      "off_running": "聚焦输入框会在本步结束后暂停写作者。",
+      "off_pausing": "写作者将在本步结束后暂停；输入意见发送。",
+      "off_paused": "已暂停。可编辑正文或输入意见。草稿区失焦且输入为空时继续。",
+      "other_paused": "已暂停。输入意见，或从助手面板继续。",
+      "panel_hold": "这个暂停的步骤在助手面板处理。",
+      "hidden": ""
+    }
+  }
 }

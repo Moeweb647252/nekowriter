@@ -136,14 +136,6 @@
   "delete.is_anchor": "This chapter anchors a side story, so it cannot be deleted yet:",
   "delete.is_anchor_hint": "Point each side story below at another anchor chapter, then delete this one.",
   "delete.side_story_ref": "Side story #{{id}}",
-  "pending_title": "The agent wrote this. Apply it?",
-  "pending_title_superseded": "The agent's text was not applied",
-  "pending_body": "The highlighted paragraphs are what changes when you apply it. Nothing is stored until you decide.",
-  "pending_superseded_body": "You edited the draft after the agent wrote this (the draft is now version {{draft}}, the agent read version {{expected}}), so its text is not applied. Continue to let it carry on from your draft.",
-  "pending_approve": "Apply and continue",
-  "pending_continue": "Continue without it",
-  "pending_request_changes": "Request changes",
-  "pending_request_changes_hint": "Your feedback goes to the agent, which rewrites the text and continues. This text is not applied.",
   "pending_preview_note": "Preview: the highlighted paragraphs are the agent's text, not part of your draft yet.",
   "pending_live_words": "{{staged}} words once applied ({{confirmed}} now)",
   "word_count_projected": "Word count once the staged write applies (projection only, not stored)",
@@ -171,5 +163,38 @@
   "send_back_dialog.write_outline": "Write the outline",
   "outline_dialog.guidance_placeholder": "Optional. The planner reads this before drafting the outline.",
   "status.cancelled": "Cancelled",
-  "status.done": "Done"
+  "status.done": "Done",
+  "dock": {
+    "approve": "Apply and continue",
+    "send": "Send",
+    "input_label": "Message the writer",
+    "placeholder": {
+      "on_running": "Message the writer; it reads it with its next step",
+      "held": "Enter applies the highlighted text · type to request changes",
+      "held_keep": "Enter applies the highlighted text · type a note; the text is kept",
+      "held_completes": "Enter finishes the chapter with the highlighted text · type a note to keep writing",
+      "superseded": "The draft changed (v{{expected}} → v{{draft}}), so this text won't be applied · Enter continues",
+      "on_paused": "Enter continues · type feedback",
+      "off_running": "Click here to pause the writer after this step and give feedback",
+      "off_pausing": "Pausing after this step… type your feedback",
+      "off_paused": "Paused · edit the text or type feedback; click outside the draft to continue",
+      "other_paused": "Paused · type feedback, or continue from the agent panel",
+      "panel_hold": "Decide the held step in the agent panel",
+      "hidden": "Message the writer"
+    },
+    "description": {
+      "on_running": "Type a message; the writer reads it with its next step.",
+      "held": "The highlighted text is applied when you press Enter on the empty input. Typing requests changes instead.",
+      "held_keep": "The highlighted text is kept and applied when you enter a note.",
+      "held_completes": "The highlighted text finishes the chapter when approved. Type a note to keep writing.",
+      "superseded": "The draft changed after this text was written, so it will not be applied. Enter continues without it.",
+      "on_paused": "Enter continues. Type feedback to guide the next step.",
+      "off_running": "Focus the input to pause the writer after this step.",
+      "off_pausing": "The writer pauses after this step. Type feedback to send.",
+      "off_paused": "Paused. Edit the draft or type feedback. Leaving the draft with an empty input continues.",
+      "other_paused": "Paused. Type feedback, or continue from the agent panel.",
+      "panel_hold": "This held step is decided in the agent panel.",
+      "hidden": ""
+    }
+  }
 }
