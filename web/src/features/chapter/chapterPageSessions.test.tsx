@@ -221,7 +221,7 @@ function chapterText(id: number, title: string, text: string, openSessions: Sess
 }
 
 
-function renderPage(tab = "outline") {
+function renderPage(tab = "outline", fixedHeight?: number) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   const router = createMemoryRouter(
     [
@@ -234,12 +234,19 @@ function renderPage(tab = "outline") {
     ],
     { initialEntries: [`/books/${BOOK_ID}/chapters/${CHAPTER_ID}?tab=${tab}`] },
   )
-  render(
+  const page = (
     <QueryClientProvider client={client}>
       <RouterProvider router={router} />
-    </QueryClientProvider>,
+    </QueryClientProvider>
   )
-  return { router, client }
+  const rendered = render(
+    fixedHeight === undefined ? (
+      page
+    ) : (
+      <div style={{ height: `${fixedHeight}px`, display: "flex", flexDirection: "column" }}>{page}</div>
+    ),
+  )
+  return { router, client, container: rendered.container }
 }
 
 beforeEach(() => {
@@ -251,6 +258,35 @@ beforeEach(() => {
   server.chapter = chapter([planner()])
   server.chapters = {}
   useUiStore.setState({ pinnedSession: {} })
+})
+
+describe("ChapterPage draft layout", () => {
+  it("lets the draft column fill a fixed-height page instead of collapsing to content", async () => {
+    server.chapter = chapterText(CHAPTER_ID, "第一章", "A 的正文")
+    server.chapters[CHAPTER_ID] = chapterText(CHAPTER_ID, "第一章", "A 的正文")
+    const { container } = renderPage("text", 900)
+    await screen.findByText("A 的正文", {}, { timeout: 3000 })
+    const root = container.querySelector(":scope > div > div") as HTMLElement
+    expect(root.className).toContain("h-full")
+    expect(root.className).toContain("min-h-0")
+    expect(root.className).toContain("flex-col")
+    const tabs = root.querySelector(":scope > [data-slot=tabs]") as HTMLElement
+    expect(tabs.className).toContain("flex")
+    expect(tabs.className).toContain("min-h-0")
+    expect(tabs.className).toContain("flex-1")
+    const panel = tabs.querySelector(":scope > [data-slot=tabs-content]") as HTMLElement
+    expect(panel.className).toContain("min-h-0")
+    expect(panel.className).toContain("flex-1")
+    expect(panel.className).toContain("flex-col")
+    const region = panel.querySelector("[data-draft-region]") as HTMLElement
+    expect(region.className).toContain("min-h-0")
+    expect(region.className).toContain("flex-1")
+    expect(region.className).toContain("flex-col")
+    const scroll = region.querySelector(":scope > div") as HTMLElement
+    expect(scroll.className).toContain("overflow-auto")
+    expect(scroll.className).toContain("flex-1")
+    expect(scroll.className).toContain("min-h-0")
+  })
 })
 
 describe("ChapterPage session focus", () => {

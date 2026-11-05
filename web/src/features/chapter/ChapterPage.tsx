@@ -109,7 +109,7 @@ export default function ChapterPage() {
   const unspaced = isUnspaced(book.data.writing_language)
 
   return (
-    <div className="flex min-h-full flex-col">
+    <div className="flex h-full min-h-0 flex-col">
       <ChapterHeader
         key={document.id}
         chapter={document}
@@ -136,7 +136,7 @@ export default function ChapterPage() {
           params.set("tab", next)
           setSearchParams(params, { replace: true })
         }}
-        className="min-h-0 flex-1"
+        className="flex min-h-0 flex-1 flex-col"
       >
         <div className="border-b px-6">
           <TabsList variant="line">
@@ -146,7 +146,7 @@ export default function ChapterPage() {
             <TabsTrigger value="history">{t("chapter:tab_history")}</TabsTrigger>
           </TabsList>
         </div>
-        <TabsContent value="text" className="flex min-h-0 flex-col p-0">
+        <TabsContent value="text" className="flex min-h-0 flex-1 flex-col p-0">
           <div data-draft-region className="flex min-h-0 flex-1 flex-col">
           <div className="min-h-0 flex-1 overflow-auto p-6">
           <ChapterText
