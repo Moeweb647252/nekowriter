@@ -60,3 +60,52 @@ describe("ContextDialog", () => {
     expect(screen.getByTestId("context-treemap")).toHaveClass("min-w-0", "max-w-full")
     expect(screen.getByTestId("context-treemap").querySelector("svg")).toHaveClass("max-w-full")
   })
+
+function subdividedView(): ContextBreakdownDto {
+  const keys = [
+    "block.settings.outline",
+    "block.settings.characters",
+    "block.settings.world",
+    "block.settings.protagonist",
+    "block.memory.recent",
+    "block.memory.entities",
+    "block.memory.facts",
+    "block.memory.foreshadowing",
+  ]
+  return {
+    session_id: 7, seq: null, context_window: 100000, max_output_tokens: 4096, rollover_at: null,
+    estimate: 1000, measured: null, cached: null, scale: 1, calibrated: false, pending_calls: 0,
+    groups: [
+      {
+        key: "kickoff", estimate: 800,
+        parts: keys.map((name) => ({
+          key: "block", name, estimate: 100,
+          items: [{ seq: 1, call_index: null, estimate: 100, excerpt: name }], rest: null,
+        })),
+      },
+      {
+        key: "results", estimate: 200,
+        parts: [
+          { key: "result", name: "insert_text", estimate: 120, items: [], rest: null },
+          { key: "result", name: "finish_draft", estimate: 80, items: [], rest: null },
+        ],
+      },
+    ],
+    requests: [],
+  }
+}
+
+it("labels the eight kickoff subdivisions and keeps one part per tool result", () => {
+  state.view = subdividedView()
+  render(<ContextDialog sessionId={7} open onOpenChange={vi.fn()} />)
+  fireEvent.click(screen.getByTestId("context-cell-group-kickoff"))
+  for (const label of ["Outline", "Characters", "World", "Protagonist", "Recent", "Entities", "Facts", "Foreshadowing"]) {
+    expect(screen.getByText(label)).toBeInTheDocument()
+  }
+  fireEvent.click(screen.getByRole("button", { name: "List" }))
+  for (const label of ["Outline", "Characters", "World", "Protagonist", "Recent", "Entities", "Facts", "Foreshadowing"]) {
+    expect(screen.getAllByText(label).length).toBeGreaterThan(0)
+  }
+  expect(screen.getByText("insert_text")).toBeInTheDocument()
+  expect(screen.getByText("finish_draft")).toBeInTheDocument()
+})

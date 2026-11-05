@@ -26,9 +26,17 @@ export const PART_LABEL_KEYS: Record<ContextPartKey, string> = Object.fromEntrie
 
 const BLOCK_LABELS: Record<string, string> = {
   "block.settings": "agent:context.block.settings",
+  "block.settings.outline": "agent:context.block.settings_outline",
+  "block.settings.characters": "agent:context.block.settings_characters",
+  "block.settings.world": "agent:context.block.settings_world",
+  "block.settings.protagonist": "agent:context.block.settings_protagonist",
   "block.canon_systems": "agent:context.block.canon_systems",
   "block.writing_skills": "agent:context.block.writing_skills",
   "block.memory": "agent:context.block.memory",
+  "block.memory.recent": "agent:context.block.memory_recent",
+  "block.memory.entities": "agent:context.block.memory_entities",
+  "block.memory.facts": "agent:context.block.memory_facts",
+  "block.memory.foreshadowing": "agent:context.block.memory_foreshadowing",
   "block.recent_chapters": "agent:context.block.recent_chapters",
   "block.goals": "agent:context.block.goals",
   "block.chapter_draft": "agent:context.block.chapter_draft",

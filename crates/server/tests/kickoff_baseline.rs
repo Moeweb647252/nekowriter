@@ -488,8 +488,14 @@ async fn maintenance_and_book_agent_kickoffs_carry_their_sources() {
     assert_eq!(
         sources,
         vec![
-            Some("block.settings".to_owned()),
-            Some("block.memory".to_owned()),
+            Some("block.settings.outline".to_owned()),
+            Some("block.settings.characters".to_owned()),
+            Some("block.settings.world".to_owned()),
+            Some("block.settings.protagonist".to_owned()),
+            Some("block.memory.recent".to_owned()),
+            Some("block.memory.entities".to_owned()),
+            Some("block.memory.facts".to_owned()),
+            Some("block.memory.foreshadowing".to_owned()),
             Some("block.cast_index".to_owned()),
             Some("block.chapter_draft".to_owned()),
             Some("archivist.kickoff.maintenance".to_owned()),
@@ -710,5 +716,86 @@ async fn frozen_tool_lists_of_every_role_are_pinned() {
     insta::assert_snapshot!(
         "frozen_tool_lists",
         serde_json::to_string_pretty(&roles).expect("tools JSON")
+    );
+}
+
+/// H-2(a): the real write-session breakdown exposes the eight kickoff subdivisions as parts.
+#[tokio::test]
+async fn write_kickoff_breakdown_has_the_eight_subdivision_parts() {
+    let fixture = baseline().await;
+    draft_target(&fixture).await;
+    let session_id = create(&fixture, SessionKind::ChapterWrite).await;
+    let view =
+        nekowriter::services::sessions::context(fixture.runtime.app.db().conn(), session_id, None)
+            .await
+            .expect("context view");
+    let kickoff = view
+        .groups
+        .iter()
+        .find(|group| format!("{:?}", group.key) == "Kickoff")
+        .expect("kickoff group");
+    let names: Vec<&str> = kickoff
+        .parts
+        .iter()
+        .filter_map(|part| part.name.as_deref())
+        .filter(|name| name.starts_with("block.settings.") || name.starts_with("block.memory."))
+        .collect();
+    assert_eq!(
+        names,
+        vec![
+            "block.settings.outline",
+            "block.settings.characters",
+            "block.settings.world",
+            "block.settings.protagonist",
+            "block.memory.recent",
+            "block.memory.entities",
+            "block.memory.facts",
+            "block.memory.foreshadowing",
+        ],
+        "the kickoff group keeps its eight subdivisions"
+    );
+}
+
+/// H-2(b): the first ScriptedProvider request of a write session is byte-identical to the
+/// pre-split kickoff snapshot.
+#[tokio::test]
+async fn write_request_body_matches_the_pre_split_snapshot() {
+    let fixture = baseline().await;
+    let _session_id = create(&fixture, SessionKind::ChapterWrite).await;
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while fixture.runtime.scripted.requests().is_empty() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the write session issued no request"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+    }
+    let requests = fixture.runtime.scripted.requests();
+    let request = requests
+        .first()
+        .expect("the write session issued a request");
+    let user_text = request
+        .messages
+        .iter()
+        .find_map(|message| match message {
+            nekowriter_llm::Message::User { blocks } => Some(
+                blocks
+                    .iter()
+                    .map(|block| block.text.as_str())
+                    .collect::<Vec<_>>()
+                    .join("\n\n"),
+            ),
+            _ => None,
+        })
+        .expect("a user message");
+    let snapshot = include_str!("snapshots/kickoff_baseline__write_kickoff.snap");
+    let expected = snapshot
+        .splitn(3, "---\n")
+        .nth(2)
+        .expect("snapshot body")
+        .trim_end();
+    assert_eq!(
+        user_text, expected,
+        "the provider request matches the pre-split text byte for byte"
     );
 }

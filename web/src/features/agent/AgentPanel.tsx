@@ -187,7 +187,9 @@ export function AgentPanel({ bookId, chapterId, bookStatus }: { bookId: number; 
       .filter((entry) => entry.kind === "book_agent" && OPEN_STATUSES.has(entry.status))
       .sort((left, right) => right.id - left.id)[0]
     setStartingNewConversation(openAgent === undefined)
-    setPinnedId(openAgent?.id ?? null, true)
+    // No open book-agent session means the start form is shown; do not leave a dead manual pin
+    // behind, so the planner/writer auto-follow can resume when the author picks it.
+    setPinnedId(openAgent?.id ?? null, openAgent !== undefined)
   }), [bookId, sessions, setPinnedId])
 
   useSessionToasts(session)
@@ -258,9 +260,23 @@ export function AgentPanel({ bookId, chapterId, bookStatus }: { bookId: number; 
     return <Skeleton className="m-3 h-40" />
   }
 
+  const selectSession = (sessionId: number) => {
+    setStartingNewConversation(false)
+    setPinnedId(sessionId, true)
+  }
+
   if (session === undefined || startingNewConversation) {
     return (
       <div className="flex h-full flex-col">
+        {session === undefined ? null : (
+          <SessionHeader
+            session={session}
+            sessions={sessions}
+            onSelect={selectSession}
+            systemPrompt={snapshot.data?.system_prompt ?? ""}
+            toolNames={snapshot.data?.tool_names ?? []}
+          />
+        )}
         {bookStatus === "conceiving" ? (
           <p className="p-4 text-xs text-muted-foreground">{t("agent:book_agent.conceiving_disabled")}</p>
         ) : (
@@ -348,10 +364,7 @@ export function AgentPanel({ bookId, chapterId, bookStatus }: { bookId: number; 
       <SessionHeader
         session={session}
         sessions={sessions}
-        onSelect={(sessionId) => {
-          setStartingNewConversation(false)
-          setPinnedId(sessionId, true)
-        }}
+        onSelect={selectSession}
         pausing={pausing || session.pause_requested}
         stopping={stopping}
         systemPrompt={snapshot.data?.system_prompt ?? ""}

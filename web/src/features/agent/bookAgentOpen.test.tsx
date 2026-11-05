@@ -1,5 +1,6 @@
 /** B-1: the Book agent entry must never fall through to a writer/other session. */
 import { act, render, screen } from "@testing-library/react"
+import userEvent from "@testing-library/user-event"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 
 import type { SessionDto } from "@/api/gen/SessionDto"
@@ -27,6 +28,7 @@ vi.mock("sonner", () => ({ toast: { message: vi.fn(), success: vi.fn(), error: v
 import { AgentPanel } from "@/features/agent/AgentPanel"
 import { requestBookAgent } from "@/features/agent/bookAgentIntent"
 import { TooltipProvider } from "@/components/ui/tooltip"
+import { useUiStore } from "@/stores/ui"
 
 function writer(): SessionDto {
   return {
@@ -40,6 +42,10 @@ function writer(): SessionDto {
   } as unknown as SessionDto
 }
 
+function planner(): SessionDto {
+  return { ...writer(), id: 2, role: "planner", kind: "chapter_outline", status: "running" } as SessionDto
+}
+
 beforeEach(() => { sessions.list = [writer()] })
 
 describe("Book agent open intent", () => {
@@ -48,5 +54,21 @@ describe("Book agent open intent", () => {
     act(() => requestBookAgent(3))
     expect(screen.getByTestId("book-agent-start")).toBeInTheDocument()
     expect(screen.queryByText("Writing")).not.toBeInTheDocument()
+  })
+
+  it("keeps the planner reachable from the start form", async () => {
+    const user = userEvent.setup()
+    sessions.list = [planner()]
+    render(<TooltipProvider><AgentPanel bookId={3} /></TooltipProvider>)
+    act(() => requestBookAgent(3))
+    expect(screen.getByTestId("book-agent-start")).toBeInTheDocument()
+    expect(useUiStore.getState().pinnedSessionManual[3]).toBe(false)
+    expect(screen.getByText("Outlining · Chapter 1")).toBeInTheDocument()
+    await user.click(screen.getByRole("button", { name: "Switch session" }))
+    await user.click(screen.getByRole("menuitem", { name: /Outlining/ }))
+    expect(screen.queryByTestId("book-agent-start")).not.toBeInTheDocument()
+    expect(screen.getAllByText("Outlining · Chapter 1").length).toBeGreaterThan(0)
+    expect(useUiStore.getState().pinnedSession[3]).toBe(2)
+    expect(useUiStore.getState().pinnedSessionManual[3]).toBe(true)
   })
 })

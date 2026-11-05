@@ -1,0 +1,56 @@
+# 记忆
+
+## 短期记忆
+当前任务：{{ chapter.label }}{% if chapter.title %}《{{ chapter.title }}》{% endif %}
+
+{% if systems.memory %}{% if memory.is_first and chapter.number == 1 %}
+这是本书（本轨道）的第一章，暂无前文。
+{% elif memory.is_first %}
+前面的章节都还没有定稿，记忆中暂无前文；本章并不是本书（本轨道）的第一章。
+{% else %}
+### 近期章节摘要（由远及近）
+{% for s in memory.recent_summaries %}- {{ s.label }}{% if s.title %}《{{ s.title }}》{% endif %}：{{ s.summary or "（尚无摘要）" }}
+{% endfor %}{% if memory.previous_tail %}
+### 上一章结尾（{{ memory.previous_tail.label }}）
+{{ memory.previous_tail.text }}
+{% endif %}{% endif %}{% endif %}{% if systems.entities %}{% if memory.protagonist %}
+### 主角当前状态：{{ memory.protagonist.name }}(#{{ memory.protagonist.id }}){% if memory.protagonist.status != "active" %}【{{ memory.protagonist.status_label }}】{% endif %}
+
+{% if memory.protagonist.after_anchor %}（这是正文锚点之后的状态，对本番外可能尚不成立，请结合锚点判断。）
+{% endif %}{{ memory.protagonist.state or "（尚无记录）" }}
+{% if memory.protagonist.attributes %}{% for a in memory.protagonist.attributes %}{{ a.key }}：{{ a.value }}{% if not loop.last %}；{% endif %}{% endfor %}
+
+{% endif %}{% endif %}{% endif %}{% if chapter.outline %}
+### 本章章纲
+<chapter_outline>
+{{ chapter.outline }}
+</chapter_outline>
+{% endif %}
+
+{% if systems.entities %}## 中期记忆（近 {{ memory.window_mid }} 章）
+{% if memory.recent_changes %}
+### 近期状态与关系变化
+{% for c in memory.recent_changes %}- {{ c.chapter_label }} · {{ c.target }}：{{ c.note }}
+{% endfor %}{% else %}
+近期没有记录到状态或关系变化。
+{% endif %}{% if memory.appearances %}
+### 人物出场记录
+{% for a in memory.appearances %}- {{ a.name }}(#{{ a.id }})：{{ a.count }} 次（{% for i in a.chapters %}{{ i.label }}·{{ i.role_label }}{% if not loop.last %}、{% endif %}{% endfor %}）
+{% endfor %}{% endif %}{% if memory.absent_important %}
+### 久未出场的重要人物
+{% for a in memory.absent_important %}- {{ a.name }}(#{{ a.id }})：最近出场于{{ a.last_label }}
+{% endfor %}{% endif %}{% endif %}
+
+{% if systems.entities or systems.memory or systems.foreshadowing or systems.timeline %}## 长期记忆索引（详情请用工具检索）
+{% if systems.memory and memory.key_notes %}
+### 核心事实与世界规则
+{% for n in memory.key_notes %}- [{{ n.kind_label }}#{{ n.id }}] {{ n.content }}
+{% endfor %}{% endif %}{% if systems.foreshadowing and memory.open_foreshadowing %}
+### 未回收的伏笔
+{% for f in memory.open_foreshadowing %}- #{{ f.id }} {{ f.title }}（埋于{{ f.planted_label }}）
+{% endfor %}{% endif %}{% if systems.entities and memory.cast %}
+### 主要实体
+{% for e in memory.cast %}- #{{ e.id }} {{ e.name }}【{{ e.kind_label }}】{% if e.summary %}— {{ e.summary }}{% endif %}
+
+{% endfor %}{% endif %}
+{% if systems.entities or systems.timeline or systems.memory or systems.foreshadowing %}档案规模：{% if systems.entities %}人物 {{ memory.counts.character }}，组织 {{ memory.counts.organization }}，地点 {{ memory.counts.location }}，物品 {{ memory.counts.item }}，其他 {{ memory.counts.other }}{% endif %}{% if systems.timeline %}{% if systems.entities %}；{% endif %}时间线事件 {{ memory.counts.event }}{% if memory.counts.event_planned %}（其中计划中 {{ memory.counts.event_planned }}）{% endif %}{% endif %}{% if systems.memory %}{% if systems.entities or systems.timeline %}；{% endif %}事实 {{ memory.counts.fact }}，世界规则 {{ memory.counts.world_rule }}{% endif %}{% if systems.foreshadowing %}{% if systems.entities or systems.timeline or systems.memory %}；{% endif %}未回收伏笔 {{ memory.counts.foreshadowing_open }}{% endif %}。{% endif %}{% endif %}

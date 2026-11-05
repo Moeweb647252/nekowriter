@@ -1,14 +1,13 @@
 # Context blocks assembled into kickoff messages (spec/03 §10) or included by tasks.
 
 [[prompt]]
-key = "block.settings"
+key = "block.settings.outline"
 kind = "block"
 agent = "shared"
 vars = ["book", "settings"]
-title_en = "Block — setting materials"
-title_zh = "上下文 · 设定资料"
-text = '''
-# 设定资料
+title_en = "Block — setting materials: outline"
+title_zh = "上下文 · 设定资料：故事大纲"
+text = '''# 设定资料
 
 本书：《{{ book.title }}》{% if book.genre %}　类型：{{ book.genre }}{% endif %}
 
@@ -21,7 +20,16 @@ text = '''
 {{ settings.outline or "（尚未填写）" }}
 </book_outline>
 
-## 二、人物设定（按重要性排序）
+'''
+
+[[prompt]]
+key = "block.settings.characters"
+kind = "block"
+agent = "shared"
+vars = ["book", "settings"]
+title_en = "Block — setting materials: characters"
+title_zh = "上下文 · 设定资料：人物设定"
+text = '''## 二、人物设定（按重要性排序）
 {% for c in settings.characters %}
 <character rank="{{ c.rank }}" name="{{ c.name }}"{% if c.role_label %} role="{{ c.role_label }}"{% endif %}>
 {% if c.summary %}{{ c.summary }}
@@ -33,12 +41,30 @@ text = '''
 （尚未填写）
 {% endfor %}
 
-## 三、世界观
+'''
+
+[[prompt]]
+key = "block.settings.world"
+kind = "block"
+agent = "shared"
+vars = ["book", "settings"]
+title_en = "Block — setting materials: world"
+title_zh = "上下文 · 设定资料：世界观"
+text = '''## 三、世界观
 <world_setting>
 {{ settings.world or "（尚未填写）" }}
 </world_setting>
 
-## 四、主角详细设定
+'''
+
+[[prompt]]
+key = "block.settings.protagonist"
+kind = "block"
+agent = "shared"
+vars = ["book", "settings"]
+title_en = "Block — setting materials: protagonist"
+title_zh = "上下文 · 设定资料：主角详细设定"
+text = '''## 四、主角详细设定
 <protagonist_profile>
 {{ settings.protagonist or "（尚未填写）" }}
 </protagonist_profile>
@@ -74,14 +100,13 @@ text = '''
 '''
 
 [[prompt]]
-key = "block.memory"
+key = "block.memory.recent"
 kind = "block"
 agent = "shared"
 vars = ["memory", "chapter", "systems"]
-title_en = "Block — tiered memory"
-title_zh = "上下文 · 分层记忆"
-text = '''
-# 记忆
+title_en = "Block — memory: recent chapters and outline"
+title_zh = "上下文 · 记忆：近期章节与章纲"
+text = '''# 记忆
 
 ## 短期记忆
 当前任务：{{ chapter.label }}{% if chapter.title %}《{{ chapter.title }}》{% endif %}
@@ -96,7 +121,16 @@ text = '''
 {% endfor %}{% if memory.previous_tail %}
 ### 上一章结尾（{{ memory.previous_tail.label }}）
 {{ memory.previous_tail.text }}
-{% endif %}{% endif %}{% endif %}{% if systems.entities %}{% if memory.protagonist %}
+{% endif %}{% endif %}{% endif %}'''
+
+[[prompt]]
+key = "block.memory.entities"
+kind = "block"
+agent = "shared"
+vars = ["memory", "chapter", "systems"]
+title_en = "Block — memory: entities"
+title_zh = "上下文 · 记忆：实体"
+text = '''{% if systems.entities %}{% if memory.protagonist %}
 ### 主角当前状态：{{ memory.protagonist.name }}(#{{ memory.protagonist.id }}){% if memory.protagonist.status != "active" %}【{{ memory.protagonist.status_label }}】{% endif %}
 
 {% if memory.protagonist.after_anchor %}（这是正文锚点之后的状态，对本番外可能尚不成立，请结合锚点判断。）
@@ -124,11 +158,29 @@ text = '''
 {% for a in memory.absent_important %}- {{ a.name }}(#{{ a.id }})：最近出场于{{ a.last_label }}
 {% endfor %}{% endif %}{% endif %}
 
-{% if systems.entities or systems.memory or systems.foreshadowing or systems.timeline %}## 长期记忆索引（详情请用工具检索）
+'''
+
+[[prompt]]
+key = "block.memory.facts"
+kind = "block"
+agent = "shared"
+vars = ["memory", "chapter", "systems"]
+title_en = "Block — memory: facts and world rules"
+title_zh = "上下文 · 记忆：核心事实与世界规则"
+text = '''{% if systems.entities or systems.memory or systems.foreshadowing or systems.timeline %}## 长期记忆索引（详情请用工具检索）
 {% if systems.memory and memory.key_notes %}
 ### 核心事实与世界规则
 {% for n in memory.key_notes %}- [{{ n.kind_label }}#{{ n.id }}] {{ n.content }}
-{% endfor %}{% endif %}{% if systems.foreshadowing and memory.open_foreshadowing %}
+{% endfor %}{% endif %}{% endif %}'''
+
+[[prompt]]
+key = "block.memory.foreshadowing"
+kind = "block"
+agent = "shared"
+vars = ["memory", "chapter", "systems"]
+title_en = "Block — memory: foreshadowing"
+title_zh = "上下文 · 记忆：未回收的伏笔"
+text = '''{% if systems.entities or systems.memory or systems.foreshadowing or systems.timeline %}{% if systems.foreshadowing and memory.open_foreshadowing %}
 ### 未回收的伏笔
 {% for f in memory.open_foreshadowing %}- #{{ f.id }} {{ f.title }}（埋于{{ f.planted_label }}）
 {% endfor %}{% endif %}{% if systems.entities and memory.cast %}

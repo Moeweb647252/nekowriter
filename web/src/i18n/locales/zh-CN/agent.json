@@ -515,7 +515,15 @@
       "book_index": "书籍索引",
       "first_message": "第一条消息",
       "task": "任务",
-      "unlabeled": "第 {{number}} 块"
+      "unlabeled": "第 {{number}} 块",
+      "settings_outline": "大纲",
+      "settings_characters": "角色",
+      "settings_world": "世界观",
+      "settings_protagonist": "主角",
+      "memory_recent": "近期",
+      "memory_entities": "实体",
+      "memory_facts": "事实",
+      "memory_foreshadowing": "伏笔"
     },
     "tooltip": {
       "share": "{{share}}%",
