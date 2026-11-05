@@ -4,7 +4,7 @@
  * One `EventSource` per open book (or global when no book is open). Deltas and previews are
  * coalesced with `requestAnimationFrame` before they reach the store.
  */
-import type { QueryClient } from "@tanstack/react-query"
+import type { QueryClient, QueryKey } from "@tanstack/react-query"
 
 import type { ChapterDto } from "@/api/gen/ChapterDto"
 import type { SessionDto } from "@/api/gen/SessionDto"
@@ -51,33 +51,48 @@ function invalidateContextCurrent(queryClient: QueryClient, sessionId: number): 
   )
 }
 
+/** Writes an event into a cache. A fetch of the same key already in flight was requested
+ *  before the event and may carry the state before it, so it is cancelled and requested again:
+ *  any response that lands afterwards reflects the event (D-174). */
+function patchQuery<T>(
+  queryClient: QueryClient,
+  key: QueryKey,
+  update: (cached: T) => T,
+): void {
+  const cached = queryClient.getQueryData<T>(key)
+  if (cached !== undefined) {
+    queryClient.setQueryData<T>(key, update(cached))
+  }
+  const inFlight = queryClient.isFetching({ queryKey: key, exact: true }) > 0
+  if (inFlight) {
+    void queryClient.cancelQueries({ queryKey: key, exact: true })
+  }
+  if (inFlight || cached === undefined) {
+    void queryClient.invalidateQueries({ queryKey: key, exact: true, refetchType: "all" })
+  }
+}
+
 function updateChapterOpenSession(
   queryClient: QueryClient,
   chapterId: number,
   session: Record<string, unknown>,
 ): void {
-  const cached = queryClient.getQueryData<ChapterDto>(keys.chapters.detail(chapterId))
-  if (cached === undefined) {
-    void queryClient.invalidateQueries({ queryKey: keys.chapters.detail(chapterId) })
-    return
-  }
-  const sessions = cached.open_sessions ?? []
   const id = session.id
   if (typeof id !== "number") return
-  const terminal =
-    session.status === "completed" ||
-    session.status === "superseded" ||
-    session.status === "abandoned"
-  const next = terminal
-    ? sessions.filter((item) => item.id !== id)
-    : sessions.some((item) => item.id === id)
-      ? sessions.map((item) =>
-          item.id === id ? ({ ...item, ...session } as SessionDto) : item,
-        )
-      : [...sessions, session as unknown as SessionDto]
-  queryClient.setQueryData(keys.chapters.detail(chapterId), {
-    ...cached,
-    open_sessions: next,
+  patchQuery<ChapterDto>(queryClient, keys.chapters.detail(chapterId), (cached) => {
+    const sessions = cached.open_sessions ?? []
+    const terminal =
+      session.status === "completed" ||
+      session.status === "superseded" ||
+      session.status === "abandoned"
+    const next = terminal
+      ? sessions.filter((item) => item.id !== id)
+      : sessions.some((item) => item.id === id)
+        ? sessions.map((item) =>
+            item.id === id ? ({ ...item, ...session } as SessionDto) : item,
+          )
+        : [...sessions, session as unknown as SessionDto]
+    return { ...cached, open_sessions: next }
   })
 }
 
@@ -86,15 +101,21 @@ function updateSessionSnapshot(
   sessionId: number,
   session: Record<string, unknown>,
 ): void {
-  const cached = queryClient.getQueryData<SessionSnapshotDto>(keys.sessions.detail(sessionId))
-  if (cached === undefined) {
-    void queryClient.invalidateQueries({ queryKey: keys.sessions.detail(sessionId) })
-    return
-  }
-  queryClient.setQueryData(keys.sessions.detail(sessionId), {
+  patchQuery<SessionSnapshotDto>(queryClient, keys.sessions.detail(sessionId), (cached) => ({
     ...cached,
     session: { ...cached.session, ...session } as SessionDto,
-  })
+  }))
+}
+
+function upsertCall(
+  calls: ToolCallDto[],
+  call: Record<string, unknown>,
+): ToolCallDto[] {
+  const id = call.id
+  if (typeof id !== "number") return calls
+  return calls.some((item) => item.id === id)
+    ? calls.map((item) => (item.id === id ? ({ ...item, ...call } as ToolCallDto) : item))
+    : [...calls, call as unknown as ToolCallDto]
 }
 
 function updateCachedToolCall(
@@ -102,20 +123,18 @@ function updateCachedToolCall(
   sessionId: number,
   call: Record<string, unknown>,
 ): void {
-  const cached = queryClient.getQueryData<SessionSnapshotDto>(keys.sessions.detail(sessionId))
-  if (cached === undefined) {
-    void queryClient.invalidateQueries({ queryKey: keys.sessions.detail(sessionId) })
-    return
-  }
-  const id = call.id
-  if (typeof id !== "number") return
-  const toolCalls = cached.tool_calls ?? []
-  const next = toolCalls.some((item) => item.id === id)
-    ? toolCalls.map((item) => (item.id === id ? ({ ...item, ...call } as ToolCallDto) : item))
-    : [...toolCalls, call as unknown as ToolCallDto]
-  queryClient.setQueryData(keys.sessions.detail(sessionId), {
-    ...cached,
-    tool_calls: next,
+  patchQuery<SessionSnapshotDto>(queryClient, keys.sessions.detail(sessionId), (cached) => {
+    const toolCalls = upsertCall(cached.tool_calls ?? [], call)
+    const messageId = call.message_id
+    const messages =
+      typeof messageId === "number"
+        ? cached.messages.map((item) =>
+            item.message.id === messageId
+              ? { ...item, tool_calls: upsertCall(item.tool_calls ?? [], call) }
+              : item,
+          )
+        : cached.messages
+    return { ...cached, tool_calls: toolCalls, messages }
   })
 }
 
@@ -153,6 +172,7 @@ export function connectEvents(bookId: number | null, queryClient: QueryClient) {
     useLiveStore.getState().setConnection("open")
     if (hadError) {
       hadError = false
+      useLiveStore.getState().clearAllPreviews()
       void queryClient.invalidateQueries()
     }
   }
@@ -383,29 +403,18 @@ export function applyServerEvent(
       // the cached document changes, so a cache left one version behind would silently undo the
       // ops that were just applied.
       const after = useChapterDoc.getState()
-      const cached = queryClient.getQueryData<ChapterDto>(
-        keys.chapters.detail(chapterId)
-      )
-      if (cached !== undefined) {
-        queryClient.setQueryData(keys.chapters.detail(chapterId), {
-          ...cached,
-          content: {
-            ...cached.content,
-            paragraphs: after.paragraphs,
-            next_pid: after.nextPid,
-            tail_open: after.tailOpen,
-          },
-          content_version: version,
-          word_count:
-            typeof data.word_count === "number"
-              ? data.word_count
-              : cached.word_count,
-        })
-        // The write is now visibly in the chapter; a pinned preview has handed off.
-        for (const session of cached.open_sessions ?? []) {
-          useLiveStore.getState().clearSessionPreviews(session.id)
-        }
-      }
+      patchQuery<ChapterDto>(queryClient, keys.chapters.detail(chapterId), (cached) => ({
+        ...cached,
+        content: {
+          ...cached.content,
+          paragraphs: after.paragraphs,
+          next_pid: after.nextPid,
+          tail_open: after.tailOpen,
+        },
+        content_version: version,
+        word_count:
+          typeof data.word_count === "number" ? data.word_count : cached.word_count,
+      }))
       return
     }
     case "chapter.updated": {
@@ -438,15 +447,10 @@ export function applyServerEvent(
             queryKey: keys.chapters.detail(chapterId),
           })
         }
-        const cached = queryClient.getQueryData<ChapterDto>(
-          keys.chapters.detail(chapterId)
-        )
-        if (cached !== undefined) {
-          queryClient.setQueryData(keys.chapters.detail(chapterId), {
-            ...cached,
-            ...chapter,
-          })
-        }
+        patchQuery<ChapterDto>(queryClient, keys.chapters.detail(chapterId), (cached) => ({
+          ...cached,
+          ...chapter,
+        }))
       }
       return
     }
@@ -586,7 +590,7 @@ export function applyServerEvent(
         // buffer would be dropped and the handoff would still lose the sentence.
         flushLiveDeltas()
         dropPending(sessionId, seq)
-        useLiveStore.getState().clearSeq(sessionId, seq, true)
+        useLiveStore.getState().clearSeq(sessionId, seq, useChapterDoc.getState().version)
       }
       void queryClient.invalidateQueries({
         queryKey: keys.sessions.detail(sessionId),
@@ -616,16 +620,9 @@ export function applyServerEvent(
         updateChapterOpenSession(queryClient, chapterId, session)
       }
       const status = session.status
-      if (
-        status === "held" ||
-        status === "stopped" ||
-        status === "failed" ||
-        status === "interrupted" ||
-        status === "completed" ||
-        status === "superseded" ||
-        status === "abandoned"
-      ) {
-        // A held write's pending draft (or a terminal state) is the replacement for its preview.
+      if (status !== "running" && status !== "held") {
+        // A held write's pending draft replaces its preview when the next state arrives; `held`
+        // must not clear the pinned ghost before the merged view can render (D-174 §3.3).
         useLiveStore.getState().clearSessionPreviews(sessionId)
       }
       return
@@ -639,10 +636,9 @@ export function applyServerEvent(
       if (typeof sessionId !== "number" || call === null) return
       updateCachedToolCall(queryClient, sessionId, call)
       invalidateContextCurrent(queryClient, sessionId)
-      // The staged call itself is not yet visible as the pending draft: the following
-      // `session.updated` moves the chapter's open session to held in the same batch, and that
-      // handler clears the preview. An errored call is visibly finished here, so it can clear now.
-      if (call.is_error === true) {
+      // Only a finished call removes its own preview. `held` is not finished: the pinned ghost
+      // must stay until the pending draft and its version are visible (D-174 §3.3).
+      if (call.status === "done" || call.status === "error") {
         if (typeof call.seq === "number" && typeof call.call_index === "number") {
           useLiveStore.getState().clearPreview(sessionId, call.seq, call.call_index)
         }

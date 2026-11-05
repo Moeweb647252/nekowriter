@@ -4345,6 +4345,14 @@ as before. The Demo provider now exercises the path spec/04 §7.2 describes, and
     lands (plan §8).
   - New keys `chapter:locked_live_words` and `chapter:submit_running_hint`.
     `chapter:locked_banner` stays for the full-text editor.
+  - **25/26 smoke (2026-11-06)**: the Demo provider was exercised against a private fresh database
+    and server (`127.0.0.1:7886`, `target/tmp/m26-smoke`). Live observations: an empty chapter with
+    a running writer showed the streaming ghost, the status row read “The writer is working — pause
+    to edit · 11 words in this version”, and Submit stayed present; an auto-pause-on held write
+    showed the pending draft with its amber tint. The sentence-end/pinned-handoff frames, the
+    no-`草稿已变化` approval moment, the next-sentence timing and reduced motion were not reliably
+    observable in the Demo browser run and remain test-covered (§5.2–§5.4). Screenshots are
+    `docs/screenshots/m26-*.png`; no code fix was needed from the smoke.
 - **Spec**:
   - PROJECT F11, §8.5, §10 (#38), §11;
   - spec/03 §12;

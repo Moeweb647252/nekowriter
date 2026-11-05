@@ -71,42 +71,21 @@
   text-indent: 0;
 }
 
-/* The staged draft's entrance: the streamed ghost is grey and unlit; its replacement settles to
-   full black with the waiting amber in 180ms. Reduced motion swaps instantly. */
-.pending-text {
-  animation: pending-reveal 180ms ease-out both;
-}
-
-.pending-text [data-kind="added"] {
-  animation: pending-amber 180ms ease-out both;
-}
-
-.pending-text [data-kind="changed"] > span {
-  animation: pending-amber 180ms ease-out both;
+/* The staged text's entrance (D-174): from the ghost's ink and no tint to the element's own
+   ink and tint. Only staged parts carry the class; confirmed text never animates. */
+.pending-new {
+  animation: pending-reveal 180ms ease-out;
 }
 
 @keyframes pending-reveal {
   from {
     color: color-mix(in oklch, currentColor 45%, transparent);
-  }
-  to {
-    color: inherit;
-  }
-}
-
-@keyframes pending-amber {
-  from {
     background-color: transparent;
-  }
-  to {
-    background-color: color-mix(in oklch, var(--color-status-waiting) 15%, transparent);
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .pending-text,
-  .pending-text [data-kind="added"],
-  .pending-text [data-kind="changed"] > span {
+  .pending-new {
     animation: none;
   }
 }

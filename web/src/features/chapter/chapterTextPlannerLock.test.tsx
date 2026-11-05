@@ -70,7 +70,9 @@ describe("ChapterText planner lock", () => {
         onFullTextOpenChange={() => {}}
       />,
     )
-    expect(screen.getByText("The agent is working — Pause to edit.")).toBeInTheDocument()
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "The writer is working — pause to edit · 3 words in this version",
+    )
     await user.click(screen.getByText("第一段。"))
     expect(screen.queryByRole("textbox")).not.toBeInTheDocument()
   })

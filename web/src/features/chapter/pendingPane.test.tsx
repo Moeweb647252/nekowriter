@@ -25,6 +25,10 @@ import type { ChapterDto } from "@/api/gen/ChapterDto"
 import type { ToolCallDto } from "@/api/gen/ToolCallDto"
 import type { PendingDraftView } from "@/features/chapter/pendingWrite"
 import { useChapterDoc } from "@/stores/chapterDoc"
+// @ts-expect-error -- Node test-only file read
+import { readFileSync } from "node:fs"
+
+const proseCss = readFileSync("src/styles/prose.css", "utf8")
 
 vi.mock("@/api/hooks/chapters", () => ({
   useContentMutations: () => ({
@@ -98,7 +102,7 @@ const VIEW: PendingDraftView = {
   draftVersion: 4,
   paragraphs: [
     { pid: "p1", text: "第一段。", kind: "confirmed" },
-    { pid: "p2", text: "改写后的第二段。", kind: "changed" },
+    { pid: "p2", text: "改写后的第二段。", kind: "changed", highlightFrom: 0 },
     { pid: "p3", text: "智能体新写的一段。", kind: "added" },
   ],
   stagedWords: 20,
@@ -133,14 +137,19 @@ describe("PendingText", () => {
     render(<PendingText paragraphs={VIEW.paragraphs} unspaced />)
     const first = screen.getByText("第一段。")
     expect(first).toHaveAttribute("data-kind", "confirmed")
-    expect(screen.getByText("改写后的第二段。")).toHaveAttribute("data-kind", "changed")
+    expect(screen.getByText("改写后的第二段。").closest("[data-kind]")).toHaveAttribute(
+      "data-kind",
+      "changed",
+    )
     expect(screen.getByText("智能体新写的一段。")).toHaveAttribute("data-kind", "added")
   })
 
   it("renders read-only while the chapter's owner is working", async () => {
     writer.locked = true
     renderPane()
-    expect(screen.getByText("The agent is working — Pause to edit.")).toBeInTheDocument()
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "The writer is working — pause to edit · 6 words in this version",
+    )
     await userEvent.click(screen.getByText("第一段。"))
     expect(screen.queryByRole("textbox")).not.toBeInTheDocument()
   })
@@ -173,9 +182,20 @@ describe("PendingText", () => {
     expect(screen.getByRole("textbox")).toBeInTheDocument()
   })
 
-  it("enters through the 180ms pending-text transition class", () => {
+  it("marks only staged parts with pending-new", () => {
+    const { container } = render(<PendingText paragraphs={VIEW.paragraphs} unspaced />)
+    expect(container.firstElementChild).not.toHaveClass("pending-new")
+    expect(screen.getByText("第一段。")).not.toHaveClass("pending-new")
+    expect(screen.getByText("智能体新写的一段。")).toHaveClass("pending-new")
+    expect(container.querySelector('[data-kind="changed"] span')).toHaveClass("pending-new")
+    expect(container.querySelector('[data-kind="changed"]')).not.toHaveClass("pending-new")
+  })
+
+  it("enters through the 180ms pending-text transition class without animating its wrapper", () => {
     const { container } = render(<PendingText paragraphs={VIEW.paragraphs} unspaced />)
     expect(container.firstElementChild).toHaveClass("pending-text")
+    expect(proseCss).not.toMatch(/\.pending-text\s*\{[^}]*animation:/)
+    expect(proseCss).toMatch(/\.pending-new\s*\{[^}]*animation: pending-reveal 180ms ease-out/)
   })
 
   it("does not offer the paragraph editor", () => {
@@ -183,6 +203,31 @@ describe("PendingText", () => {
     // looking at and bump the version the staged write is compared against.
     render(<PendingText paragraphs={VIEW.paragraphs} unspaced />)
     expect(screen.queryByRole("textbox")).not.toBeInTheDocument()
+  })
+})
+
+describe("ChapterText status row and empty ghost", () => {
+  it("uses the status row for the lock line, not a banner", () => {
+    writer.locked = true
+    renderPane()
+    const status = screen.getByRole("status")
+    expect(status).toHaveTextContent("The writer is working — pause to edit · 6 words in this version")
+    expect(screen.queryByText("The agent is working — Pause to edit.")).not.toBeInTheDocument()
+  })
+
+  it("renders the empty-chapter ghost when a preview exists", () => {
+    useChapterDoc.getState().load(CHAPTER.id, 4, { paragraphs: [], next_pid: 1, tail_open: true })
+    writer.preview = { name: "insert_text", field: "text", text: "第一句话。" }
+    renderPane()
+    expect(screen.getByText("第一句话。")).toBeInTheDocument()
+    expect(screen.queryByText("This chapter is empty")).not.toBeInTheDocument()
+  })
+
+  it("shows the empty state when there is no preview", () => {
+    useChapterDoc.getState().load(CHAPTER.id, 4, { paragraphs: [], next_pid: 1, tail_open: true })
+    writer.preview = undefined
+    renderPane()
+    expect(screen.getByText("This chapter is empty")).toBeInTheDocument()
   })
 })
 

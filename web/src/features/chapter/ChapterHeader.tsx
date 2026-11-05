@@ -19,6 +19,7 @@ import { useErrorToast, useWarningToasts } from "@/components/common/ErrorToast"
 import { StatusBadge } from "@/components/common/StatusBadge"
 import { WordCount } from "@/components/common/WordCount"
 import { Button } from "@/components/ui/button"
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
 import { Input } from "@/components/ui/input"
 import type { BookSettings } from "@/api/gen/BookSettings"
 import type { ChapterDto } from "@/api/gen/ChapterDto"
@@ -88,8 +89,8 @@ export function ChapterHeader({
       candidate.status === "running",
   )
   // Status actions from PROJECT §8.5; drafting/revising are driven by the agent panel.
-  const canSubmit =
-    (chapter.status === "drafting" || chapter.status === "revising") && !ownerRunning
+  const showSubmit = chapter.status === "drafting" || chapter.status === "revising"
+  const submitBlocked = ownerRunning
   const canApprove = chapter.status === "in_review" && openOwnerSession === undefined
   const latestReport = reviews.data?.reports[0]
   const canMaintain =
@@ -213,15 +214,28 @@ export function ChapterHeader({
             {t("chapter:redo_outline")}
           </Button>
         ) : null}
-        {canSubmit ? (
-          <Button
-            size="sm"
-            variant="outline"
-            disabled={submit.isPending || chapter.content.paragraphs.length === 0}
-            onClick={requestSubmit}
-          >
-            {t("chapter:submit")}
-          </Button>
+        {showSubmit ? (
+          submitBlocked ? (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <span className="inline-flex cursor-not-allowed">
+                  <Button size="sm" variant="outline" disabled>
+                    {t("chapter:submit")}
+                  </Button>
+                </span>
+              </TooltipTrigger>
+              <TooltipContent>{t("chapter:submit_running_hint")}</TooltipContent>
+            </Tooltip>
+          ) : (
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={submit.isPending || chapter.content.paragraphs.length === 0}
+              onClick={requestSubmit}
+            >
+              {t("chapter:submit")}
+            </Button>
+          )
         ) : null}
         {canApprove ? (
           <>

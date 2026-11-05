@@ -5,6 +5,7 @@
  * the button must ask first instead of silently killing the session the author paused.
  */
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
+import { TooltipProvider } from "@/components/ui/tooltip"
 import { render, screen } from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
 import { beforeEach, describe, expect, it, vi } from "vitest"
@@ -82,6 +83,7 @@ function renderHeader(current: ChapterDto) {
   })
   render(
     <QueryClientProvider client={client}>
+      <TooltipProvider>
       <ChapterHeader
         chapter={current}
         settings={SETTINGS}
@@ -89,6 +91,7 @@ function renderHeader(current: ChapterDto) {
         outlineState="accepted"
         onRename={() => {}}
       />
+      </TooltipProvider>
     </QueryClientProvider>
   )
 }
@@ -137,9 +140,12 @@ describe("ChapterHeader submit", () => {
     ).not.toBeInTheDocument()
   })
 
-  it("hides Submit while the writer is running: the endpoint would refuse it", () => {
+  it("disables Submit while the writer is running: the endpoint would refuse it", async () => {
     renderHeader(chapter([{ role: "writer", status: "running" }]))
-    expect(screen.queryByRole("button", { name: "Submit for review" })).not.toBeInTheDocument()
+    const button = screen.getByRole("button", { name: "Submit for review" })
+    expect(button).toBeDisabled()
+    await userEvent.hover(button)
+    expect(await screen.findByText("The writer is running. Pause or stop it to submit.")).toBeInTheDocument()
     expect(submitMutate).not.toHaveBeenCalled()
   })
 })

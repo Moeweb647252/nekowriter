@@ -18,6 +18,7 @@ import type { ToolCallDto } from "@/api/gen/ToolCallDto"
 import { useSession } from "@/api/hooks/sessions"
 import { findHeldCall, heldTargetPids, isChapterWriteTool } from "@/features/agent/heldCall"
 import { pendingWrite, type PendingWrite } from "@/features/chapter/pendingWrite"
+import { useChapterDoc } from "@/stores/chapterDoc"
 import { useLiveStore } from "@/stores/live"
 import type { Preview } from "@/features/chapter/GhostText"
 
@@ -72,6 +73,7 @@ export function useWriterState(
 ): WriterState {
   const session = useMemo(() => openWriterSession(chapter), [chapter])
   const previews = useLiveStore((state) => state.previews)
+  const draftVersion = useChapterDoc((state) => state.version)
   const snapshot = useSession(session?.status === "held" ? (session?.id ?? null) : null)
 
   // One resolver for both surfaces (D-141): the pane must never decide a different call than the
@@ -79,33 +81,49 @@ export function useWriterState(
   const held = useMemo(
     () =>
       session !== undefined && isWriter(session)
-        ? findHeldCall(session, snapshot.data?.tool_calls ?? calls, snapshot.data?.messages)
+        ? (() => {
+            const call = findHeldCall(
+              session,
+              snapshot.data?.tool_calls ?? calls,
+              snapshot.data?.messages,
+            )
+            // A done call can linger in `held_tool_call_id` between two events; it no longer owns
+            // the dock or the merged pane (D-174 §3.4).
+            return call?.status === "held" ? call : undefined
+          })()
         : undefined,
     [session, snapshot.data, calls],
   )
 
   const preview = useMemo(() => {
-    if (session === undefined || session.status !== "running") {
+    if (session === undefined || (session.status !== "running" && session.status !== "held")) {
       return undefined
     }
     // The preview key is `sessionId:seq:callIndex`; the newest seq of this session is the live one
-    // (spec/03 §12). A persisted call supersedes its preview, so a stale key cannot linger.
+    // (spec/03 §12). A pinned preview belongs to the draft version it was handed off from: once
+    // that version moves, the landed text replaces it in the same store update.
     const prefix = `${session.id}:`
     let newest: { seq: number; key: string } | undefined
     for (const key of Object.keys(previews)) {
-      if (!key.startsWith(prefix)) {
-        continue
-      }
+      if (!key.startsWith(prefix)) continue
       const seq = Number(key.slice(prefix.length).split(":")[0])
-      if (!Number.isFinite(seq)) {
-        continue
-      }
-      if (newest === undefined || seq > newest.seq) {
-        newest = { seq, key }
-      }
+      if (!Number.isFinite(seq)) continue
+      if (newest === undefined || seq > newest.seq) newest = { seq, key }
     }
-    return newest === undefined ? undefined : previews[newest.key]
-  }, [previews, session])
+    if (newest === undefined) return undefined
+    const candidate = previews[newest.key]
+    if (session.status === "held") {
+      // A live preview is not a decision surface; only a pinned one survives the hold, and only
+      // while its draft version is still the one on screen.
+      return candidate.pinned !== undefined && candidate.pinned.version === draftVersion
+        ? candidate
+        : undefined
+    }
+    if (candidate.pinned !== undefined && candidate.pinned.version !== draftVersion) {
+      return undefined
+    }
+    return candidate
+  }, [previews, session, draftVersion])
 
   return {
     session,

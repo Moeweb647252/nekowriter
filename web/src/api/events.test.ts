@@ -8,7 +8,7 @@
 import { QueryClient } from "@tanstack/react-query"
 import { afterEach, describe, expect, it, vi } from "vitest"
 
-import { applyServerEvent, flushLiveDeltas } from "@/api/events"
+import { applyServerEvent, connectEvents, disconnectEvents, flushLiveDeltas } from "@/api/events"
 import { keys } from "@/api/keys"
 import { useChapterDoc } from "@/stores/chapterDoc"
 import { useLiveStore } from "@/stores/live"
@@ -210,7 +210,7 @@ describe("delta coalescing", () => {
     const client = seededClient()
     client.setQueryData(keys.sessions.detail(13), {
       session: { id: 13, status: "held" },
-      messages: [],
+      messages: [{ message: { id: 7, seq: 4 }, tool_calls: [] }],
       tool_calls: [],
       inbox: [],
       inbox_pending: 0,
@@ -219,12 +219,14 @@ describe("delta coalescing", () => {
     })
     applyServerEvent(client, "session.tool_call", {
       session_id: 13,
-      tool_call: { id: 2, seq: 4, call_index: 0, name: "insert_text", status: "held" },
+      tool_call: { id: 2, message_id: 7, seq: 4, call_index: 0, name: "insert_text", status: "held" },
     })
-    expect(
-      client.getQueryData<{ tool_calls: { id: number }[] }>(keys.sessions.detail(13))
-        ?.tool_calls[0]?.id,
-    ).toBe(2)
+    const snapshot = client.getQueryData<{
+      tool_calls: { id: number }[]
+      messages: { tool_calls: { id: number }[] }[]
+    }>(keys.sessions.detail(13))
+    expect(snapshot?.tool_calls[0]?.id).toBe(2)
+    expect(snapshot?.messages[0]?.tool_calls[0]?.id).toBe(2)
   })
 
   afterEach(() => { vi.useRealTimers() })
@@ -278,6 +280,7 @@ describe("delta coalescing", () => {
 
   it("pins a writer preview across the persisted message instead of deleting it", () => {
     const client = new QueryClient()
+    useChapterDoc.setState({ version: 4 })
     useLiveStore.setState({
       streams: {},
       previews: {
@@ -288,16 +291,76 @@ describe("delta coalescing", () => {
     applyServerEvent(client, "session.message", { session_id: 13, message: { id: 9, seq: 4 } })
     expect(useLiveStore.getState().previews["13:4:0"]).toMatchObject({
       text: "写了一半",
-      pinned: true,
+      pinned: { version: 4 },
     })
     expect(useLiveStore.getState().previews["13:4:1"]).toBeUndefined()
+  })
+
+  it("keeps a pinned preview on a running session.updated", () => {
+    const client = new QueryClient()
+    useLiveStore.setState({
+      streams: {},
+      previews: { "13:4:0": { name: "insert_text", field: "text", text: "写完了", pinned: { version: 4 } } },
+    })
+    applyServerEvent(client, "session.updated", {
+      session: { id: 13, status: "running", chapter_id: 9 },
+    })
+    expect(useLiveStore.getState().previews["13:4:0"]).toBeDefined()
+  })
+
+  it("keeps a pinned preview on a held tool call", () => {
+    const client = new QueryClient()
+    useLiveStore.setState({
+      streams: {},
+      previews: { "13:4:0": { name: "insert_text", field: "text", text: "写完了", pinned: { version: 4 } } },
+    })
+    applyServerEvent(client, "session.tool_call", {
+      session_id: 13,
+      tool_call: { id: 2, seq: 4, call_index: 0, name: "insert_text", status: "held" },
+    })
+    expect(useLiveStore.getState().previews["13:4:0"]).toBeDefined()
+  })
+
+  it("does not clear a pinned preview on a held update or chapter content", () => {
+    const client = new QueryClient()
+    useChapterDoc.getState().load(9, 4, { paragraphs: [], next_pid: 1, tail_open: true })
+    useLiveStore.setState({
+      streams: {},
+      previews: { "13:4:0": { name: "insert_text", field: "text", text: "写完了", pinned: { version: 4 } } },
+    })
+    applyServerEvent(client, "session.updated", {
+      session: { id: 13, status: "held", chapter_id: 9 },
+    })
+    expect(useLiveStore.getState().previews["13:4:0"]).toBeDefined()
+    applyServerEvent(client, "chapter.content", {
+      chapter_id: 9,
+      version: 5,
+      ops: [],
+      word_count: 1,
+      tail_open: false,
+      actor: "agent",
+    })
+    expect(useLiveStore.getState().previews["13:4:0"]).toBeDefined()
+  })
+
+  it("clears a pinned preview when a call finishes done", () => {
+    const client = new QueryClient()
+    useLiveStore.setState({
+      streams: {},
+      previews: { "13:4:0": { name: "insert_text", field: "text", text: "写完了", pinned: { version: 4 } } },
+    })
+    applyServerEvent(client, "session.tool_call", {
+      session_id: 13,
+      tool_call: { id: 2, seq: 4, call_index: 0, name: "insert_text", status: "done" },
+    })
+    expect(useLiveStore.getState().previews["13:4:0"]).toBeUndefined()
   })
 
   it("clears a pinned preview when the staged call is written into the cache", () => {
     const client = seededClient()
     useLiveStore.setState({
       streams: {},
-      previews: { "13:4:0": { name: "insert_text", field: "text", text: "写完了", pinned: true } },
+      previews: { "13:4:0": { name: "insert_text", field: "text", text: "写完了", pinned: { version: 4 } } },
     })
     client.setQueryData(keys.sessions.detail(13), {
       session: { id: 13, status: "held" },
@@ -313,6 +376,33 @@ describe("delta coalescing", () => {
       tool_call: { id: 2, seq: 4, call_index: 0, name: "insert_text", status: "error", is_error: true },
     })
     expect(useLiveStore.getState().previews["13:4:0"]).toBeUndefined()
+  })
+
+  it("clears all previews on a reconnect after an error", () => {
+    class FakeEventSource {
+      static latest: FakeEventSource | null = null
+      onopen: (() => void) | null = null
+      onerror: (() => void) | null = null
+      constructor() {
+        FakeEventSource.latest = this
+      }
+      addEventListener() {}
+      close() {}
+    }
+    vi.stubGlobal("EventSource", FakeEventSource)
+    const client = new QueryClient()
+    connectEvents(null, client)
+    const source = FakeEventSource.latest
+    expect(source).not.toBeNull()
+    useLiveStore.setState({
+      streams: {},
+      previews: { "13:4:0": { name: "insert_text", field: "text", text: "写完了", pinned: { version: 4 } } },
+    })
+    source?.onerror?.()
+    source?.onopen?.()
+    expect(useLiveStore.getState().previews).toEqual({})
+    disconnectEvents()
+    vi.unstubAllGlobals()
   })
 
   it("drops buffered deltas when the persisted message arrives", () => {

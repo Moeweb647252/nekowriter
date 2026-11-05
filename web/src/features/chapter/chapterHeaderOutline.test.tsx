@@ -1,6 +1,8 @@
 /** Chapter header actions per outline state (PROJECT §8.5, D-146). */
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
+import { TooltipProvider } from "@/components/ui/tooltip"
 import { render, screen } from "@testing-library/react"
+import userEvent from "@testing-library/user-event"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 
 import type { BookSettings } from "@/api/gen/BookSettings"
@@ -79,6 +81,7 @@ function renderHeader(value: ChapterDto, outlineState: "missing" | "accepted") {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
   render(
     <QueryClientProvider client={client}>
+      <TooltipProvider>
       <ChapterHeader
         chapter={value}
         settings={SETTINGS}
@@ -86,6 +89,7 @@ function renderHeader(value: ChapterDto, outlineState: "missing" | "accepted") {
         outlineState={outlineState}
         onRename={() => {}}
       />
+      </TooltipProvider>
     </QueryClientProvider>,
   )
 }
@@ -135,7 +139,8 @@ describe("ChapterHeader outline actions", () => {
     expect(screen.queryByRole("button", { name: "Approve" })).not.toBeInTheDocument()
   })
 
-  it("hides Submit while the writer is running", () => {
+  it("disables Submit while the writer is running", async () => {
+    const user = userEvent.setup()
     renderHeader(
       chapter({
         status: "drafting",
@@ -147,7 +152,30 @@ describe("ChapterHeader outline actions", () => {
       }),
       "accepted",
     )
-    expect(screen.queryByRole("button", { name: "Submit" })).not.toBeInTheDocument()
+    const button = screen.getByRole("button", { name: "Submit for review" })
+    expect(button).toBeDisabled()
+    await user.hover(button)
+    expect(await screen.findByText("The writer is running. Pause or stop it to submit.")).toBeInTheDocument()
+  })
+
+  it("keeps Submit enabled while a writer session is held", () => {
+    renderHeader(
+      chapter({
+        status: "drafting",
+        outline: "细纲",
+        has_outline: true,
+        content: {
+          paragraphs: [{ pid: "p1", text: "一。" }],
+          next_pid: 2,
+          tail_open: false,
+        },
+        open_sessions: [
+          { id: 8, book_id: 1, role: "writer", kind: "chapter_write", status: "held" } as never,
+        ],
+      }),
+      "accepted",
+    )
+    expect(screen.getByRole("button", { name: "Submit for review" })).toBeEnabled()
   })
 
   it("does not offer Redo the outline on an official chapter", () => {
