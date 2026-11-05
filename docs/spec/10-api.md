@@ -160,7 +160,7 @@ carries `{ status, operation }`; a task with an open session reports
 | GET | `/sessions/:id` | | `SessionSnapshotDto { session, messages (last 200), tool_calls (of those messages), inbox (unconsumed author messages, oldest first), inbox_pending (count of every unconsumed inbox row, including notices), system_prompt, tool_names, next_cursor }` (the frozen prompt and tool list are shown in the session info popover) |
 | GET | `/sessions/:id/messages` | `?cursor&limit` (the cursor from the snapshot or the previous page; older first) | `{ items: { message, tool_calls }[], next_cursor }` for scrollback |
 | GET | `/sessions/:id/context` | `?seq` (an assistant message's `seq`: the request that produced it; absent = the current context) | `ContextBreakdownDto` (spec/03 §13.1, D-171). Read-only, any status. A `seq` that is not an assistant message of the session → `400 validation.failed` (`details.fields.seq`) |
-| POST | `/sessions/:id/pause` · `/resume` `{feedback?}` · `/stop` · `/continue` · `/abandon` | | `SessionDto` (validated against spec/03 §3; e.g. `stop` only while `running`) |
+| POST | `/sessions/:id/pause` `{after_step?}` · `/resume` `{feedback?, keep_write?}` · `/stop` · `/continue` · `/abandon` | | `SessionDto` (validated against spec/03 §3; e.g. `stop` only while `running`). Since D-173: `pause {after_step: true}` asks for a step pause (an empty body is a hold pause, as before); `resume` also accepts a `running` session with a pause pending (it cancels the pause and queues the feedback); and `keep_write: true` keeps a held call's staged write while giving feedback (spec/03 §5.4, §6) |
 | POST | `/sessions/:id/message` | `{ text }` | `SessionDto` |
 | POST | `/sessions/:id/answer` | `{ tool_call_id, payload }` | `SessionDto` |
 | PATCH | `/sessions/:id` | `{ granularity?, auto_pause?, pause_after_outline?, write_mode? }` — per kind: an outline session accepts `pause_after_outline` only; a write or revise session accepts the first three fields; an open `book_agent` session accepts `write_mode` only, in any open status including `running` (D-169); other combinations are `409 session.invalid_state` | `SessionDto` |
@@ -180,6 +180,7 @@ type SessionDto = {
   effort: string | null;            // the frozen thinking effort from model_snapshot (spec/04 §5.1, D-162)
   status: SessionStatus; phase: Phase; granularity: Granularity | null;
   auto_pause: boolean; pause_after_outline: boolean; pause_requested: boolean;
+  pause_after_step: boolean;        // the pending pause is a step pause (spec/03 §6, D-173)
   held_tool_call_id: number | null; base_content_version: number | null;
   write_mode: WriteMode | null;     // book_agent only: "review" | "full" (D-169)
   error: SessionError | null; usage: Usage;
@@ -199,6 +200,7 @@ type ToolCallDto = {
   status: ToolCallStatus; is_error: boolean;
   result_text: string | null;       // raw_result_text before sealing, result_text after
   appendices: Appendix[]; ui: unknown | null; sealed: boolean;
+  completes: boolean;               // a deferred call whose effects carry `complete` (D-173)
   // The staged chapter write of a deferred text-changing call (spec/03 §5.2, D-139): what
   // approval will commit. Null once the call is finalized, because the text is then in the chapter.
   pending_content: { content: ChapterContent; expected_version: number } | null;

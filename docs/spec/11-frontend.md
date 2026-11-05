@@ -231,12 +231,74 @@ message and a retry.
     **not** editable (a click would save a paragraph the author cannot see, and the save would bump
     the version the staged write is compared against), so `ParagraphEditor` and `FullTextEditor` are
     closed while it is up.
-  - `PendingWriteDock` is sticky at the bottom of the middle column: **Apply and continue**
-    (`resume` with no feedback — the transaction that applies `pending_content`) and **Request
-    changes** (`resume` with the trimmed feedback). When `pending_content.expected_version` no
-    longer equals the draft's `content_version`, `runner::apply_pending_content` **drops** the write
-    (the author's edit wins), so the pane keeps the confirmed draft, the dock says the text will not
-    be applied and names both versions, and its primary action becomes **Continue without it**.
+  - When `pending_content.expected_version` no longer equals the draft's `content_version`,
+    `runner::apply_pending_content` **drops** the write (the author's edit wins). The pane then
+    keeps the confirmed draft, the dock says the text will not be applied and names both versions,
+    and its approval reads **Continue without it**.
+- **`WriterDock`** (D-173; it replaces `PendingWriteDock`, `features/chapter/WriterDock.tsx`, state
+  in `writerDock.ts`):
+  - **Placement**: the Text tab panel is a column: the scrolling text, then the dock as a
+    non-scrolling footer (`shrink-0`, top border). Inside the footer, `mx-auto max-w-[42em]` lines
+    it up with the reading column, and the text never scrolls under it.
+  - **Visibility**: shown while the chapter's open writer session (`chapter_write` or
+    `chapter_revise`) is in `drafting` or `revising` and is `running`, `held` or `paused`.
+  - **Shape**: a plain input, i.e. an auto-growing textarea (1–6 lines) with one round button
+    (`size-8 rounded-full`) at its bottom-right:
+    - Lucide `Check` for **Approve** (labeled "Apply and continue", or "Continue without it" for
+      a superseded write);
+    - Lucide `ArrowUp` for **Send**;
+    - a spinner while a dock request runs.
+
+    There is no title or button row. The state is told by the placeholder
+    (`chapter:dock.placeholder.<state>`), the button, and an `aria-describedby` sentence; the
+    superseded sentence names both versions. `data-testid="writer-dock"` carries `data-state`.
+  - **Keys**: Enter or ⌘/Ctrl+Enter submits, Shift+Enter is a newline, and both are ignored during
+    IME composition. Escape blurs. Feedback is the trimmed text, never blank.
+  - **Behavior**. Empty means the trimmed input is empty. "Dock-owned" means `heldDecisionSurface`
+    gives the call to the dock. `ownPause` is the dock's own step pause, pending or landed as
+    `paused` without an error. "Leave" means leaving the draft region (below).
+
+    | Session state | Auto-pause on, empty | On, text | Auto-pause off, empty | Off, text |
+    |---|---|---|---|---|
+    | `running`, no pause pending | Approve, disabled | Send → `message` | Send disabled; **focus** → `pause {after_step: true}` (sets `ownPause`) | Send → `resume {feedback}` after the queued pause |
+    | `running`, the dock's step pause pending | Approve, disabled | Send → `message` | Send disabled; **leave** → `resume` (cancels) | Send → `resume {feedback}` (cancels, queues the note) |
+    | `running`, another pause pending | Approve, disabled | Send → `message` | Send disabled; leave does nothing | Send → `message` |
+    | `paused`, `ownPause` | Approve → `resume` | Send → `resume {feedback}` | Send disabled; **leave** → `resume` | Send → `resume {feedback}` |
+    | `paused`, other (a panel pause, or an `error`) | Approve → `resume` | Send → `resume {feedback}` | Send disabled; leave does nothing | Send → `resume {feedback}` |
+    | `held`, dock-owned (current or superseded) | Approve → `resume` | Send → `resume {feedback}` (discards the write) | Approve → `resume` | Send → `resume {feedback, keep_write: true}` (keeps it) |
+    | `held`, panel-owned | disabled ("Decide the held step in the agent panel") | disabled | disabled | disabled |
+
+    - With auto-pause off, focusing the dock asks for a **step pause** (spec/03 §6). The current
+      step's write lands in the text, and the writer pauses before its next request, so the text is
+      editable.
+    - A hold is always decided with the button, never by leaving. With auto-pause off, a hold comes
+      only from the panel's Pause or from a completing step. `ToolCallDto.completes` selects the
+      `held_completes` placeholder.
+    - **The draft region**: one `data-draft-region` container holds the reading column (paragraphs,
+      `ParagraphEditor`, `FullTextEditor` and their toggles) and the dock. Moving from the dock into
+      the draft text keeps the pause, so the author can edit while paused. Moving to the header,
+      the tabs, the navigator, the agent panel or the background leaves it.
+      - `useDraftRegionFocus`, active only while `ownPause`, reads `focusout`'s `relatedTarget`, or
+        the last `pointerdown` target when that is null.
+      - Before sending `resume`, it waits for the chapter's content saves, so the edit lands before
+        the writer runs and is reported to it (spec/03 §7). The `useContentMutations` mutations
+        share the `mutationKey` `keys.chapters.contentWrite(chapterId)`. The hook checks one task
+        after the leaving event, so it sees a save the leaving editor starts on blur, and waits for
+        `queryClient.isMutating({ mutationKey })` to reach 0.
+    - Leaving acts only when the dock's input is empty, so unsent text keeps the pause. It also
+      acts only while `document.hasFocus()` is true, so switching windows or tabs is not leaving.
+    - `ownPause` is cleared by any resume, send or leave, and when the session reaches `held`,
+      `completed` or another status. A reload forgets it.
+    - After a send, the input clears and blurs, and that blur never acts. After an approval, focus
+      stays.
+    - Settings are read at each event.
+    - The dock's requests are serialized:
+      - a `409 session.invalid_state` on a focus pause or a leave resume refetches silently;
+      - a send answered `409` because the session now runs with no pause pending is sent once more
+        as `message`;
+      - any other error is a toast, and the text is kept.
+  - `pendingDraftView` and `PendingText` are unchanged: the highlighted text above the dock is what
+    Approve applies and what a keep-write send keeps.
   - `pendingDraftView` (`features/chapter/pendingWrite.ts`) is the single derivation of that view,
     shared by `ChapterText` and `ChapterPage`, so the text and the dock cannot disagree.
 - Word count while a write is staged: the header keeps the server's confirmed `word_count`
@@ -320,7 +382,10 @@ message and a retry.
   - `Composer` (state-dependent label and endpoint: `message` / `resume` with feedback / disabled;
     disabled with `agent:composer.disabled_review` while `HeldCallReview` owns the decision, so a
     held call never has two differently-worded reject paths; for a write hold it is disabled with
-    `agent:composer.disabled_dock`, which names the draft pane instead of "the review above");
+    `agent:composer.disabled_dock`, which names the draft pane instead of "the review above".
+    While a writer runs, both this composer and the draft pane's `WriterDock` can steer; only the
+    dock pauses on focus, with auto-pause off, D-173. `SessionControls` shows "Pausing after this
+    step…" instead of "Pausing…" while `pause_after_step` is set);
   - `UsageFooter`, ending with `ContextButton` (the context view, below).
 - **Book agent** (D-169, spec/08 §8). The navigator item and a `Bot` button in the panel header
   open it:
@@ -739,6 +804,26 @@ test imports the file by relative path).
   `agent:session_title.<kind>` key, in both locales (these keys are built dynamically, so
   `check-i18n` cannot see them).
 - `check-i18n` runs in `scripts/check.sh`.
+- Writer dock (D-173):
+  - `writerDock.ts`: every cell of the §5.2 table, the window-blur and needs-attention exceptions,
+    and the panel-owned hold;
+  - `WriterDock`:
+    - the dock sits outside the scroll region, is present while running, held and paused, and is
+      absent in `revision_planning`, `stopped` and `completed`;
+    - keys, including IME composition and Escape;
+    - focus stays after an approval; the input clears and blurs after a send, with no second
+      `resume`;
+    - auto-pause off: one `pause {after_step: true}` on focus; on leaving the draft region empty,
+      `resume` for the dock's own pause and nothing for another; nothing on leaving with text or on
+      a window blur; a held write shows Approve, and a note sends `keep_write: true`;
+    - the `ownPause` lifecycle, and the `held_completes` placeholder from `ToolCallDto.completes`;
+    - the draft region: dock → paragraph sends nothing; then paragraph → header sends `resume`
+      only after the save resolved; dock → agent panel sends `resume`;
+    - "Pausing after this step…" in `SessionControls` while `pause_after_step` is set;
+    - the serial queue, the silent 409, and the `message` fallback;
+    - placeholders and labels per state;
+  - both locales have every `chapter:dock.*` key, and the removed `chapter:pending_*` keys are gone
+    from both.
 - Context view (D-171):
   - `lib/treemap.ts`:
     - areas proportional to the weights;

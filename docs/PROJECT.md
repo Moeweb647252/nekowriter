@@ -157,6 +157,17 @@ effort (one of the levels its model lists), configured globally and overridable 
   gives feedback. Separately, **pause after outline** holds the planner's `submit_outline` so the
   author can approve the outline before any writing starts.
 - **Steering**: a message sent while the agent runs is appended to the next tool result.
+- **The writer dock**: one input at the bottom of the draft, with a round button. Text is
+  feedback (Enter or the button).
+  - With **auto-pause on**, an empty input turns the button into **Approve**: Enter applies the
+    held text, again and again. Text there asks for changes, and the held text is discarded.
+  - With **auto-pause off**, clicking into the input pauses the writer **after its current
+    step**: that step's text lands normally, and the writer stops before the next one, so the text
+    can be edited. Leaving the draft with the input empty resumes it, and moving from the input
+    into the text to edit it keeps the pause. Text there is a note that guides what follows.
+    Unsent text keeps the pause until it is sent or cleared.
+  - A held write (from auto-pause, the panel's **Pause**, or a step that would finish the chapter)
+    is always decided with the button: Approve, or a note.
 - **Direct edits while paused**: the author may edit the text. On resume the agent receives an
   exact report of what changed.
 - **Stop** aborts the current model request immediately. **Continue** resumes later, even after
@@ -447,14 +458,18 @@ Each flow lists what the author does, what the system does, and where it happens
    outline** instead.)
 2. **Drafting** (retrieval disabled): the **Text** tab shows paragraphs as they are inserted.
    While a call is being generated, its text streams as ghost text at the cursor position.
-   - **Pause** (button or shortcut): the agent finishes the current call; the inserted text is
-     highlighted with a hold bar: **Continue** / **Feedback…**.
-   - **Feedback**: the author writes "too much exposition, show it through the fight" → the
-     agent receives it appended to the result of the held call, and may revise earlier
-     paragraphs with edit tools before continuing.
+   - **Pause** (button or shortcut): the agent finishes the current call; the text it staged is
+     highlighted in the draft, and the dock at the bottom of the pane takes the decision (§8.5).
+     With auto-pause off, clicking into the dock pauses after the current step instead: the text
+     lands, and the author can edit it before continuing.
+   - **Feedback**: the author writes "too much exposition, show it through the fight" in the dock
+     → the agent receives it appended to the result of the held call, and may revise earlier
+     paragraphs with edit tools before continuing. With auto-pause on, a held text is discarded;
+     with it off, a held text is kept and the note guides what follows.
    - **Direct edit**: while held, the author clicks a paragraph and edits it. On Continue the
      agent gets "the author edited p7: …".
-   - **Auto-pause** on: every insertion holds. Approving is one keystroke.
+   - **Auto-pause** on: every insertion holds. Approving is one keystroke: Enter in the empty
+     dock.
    - **Granularity** can change at any time from the agent panel (e.g. sentence-level for a
      crucial scene). The agent is told from its next call.
    - **Steering** while running: typed messages reach the agent with the next tool result.
@@ -717,15 +732,31 @@ and actions by status:
     highlight. Deleted paragraphs collapse out.
   - Ghost text: while `insert_text` is being generated, its text streams in muted color with a
     blinking caret, appended to the open paragraph or as a new paragraph.
-  - Held insertion: the affected paragraphs get a ring, and an inline **hold bar** appears below
-    them:
-    ```
-    ╭──────────────────────────────────────────────────────────────╮
-    │ ⏸ Paused after this insertion   [✓ Continue  ⌘⏎] [✎ Feedback…] │
-    ╰──────────────────────────────────────────────────────────────╯
-    ```
-    Feedback… expands a textarea inside the bar ("Send & continue"). For a held outline the
-    buttons read **Approve outline** and **Request changes**.
+  - Held write: the text the agent staged is shown merged into the draft and highlighted, as a
+    preview. Nothing is in the chapter until it is approved (D-141).
+- **Writer dock** (D-173), at the bottom of the pane while a writer session runs, holds or is
+  paused:
+  ```
+  ╭────────────────────────────────────────────────────────────────╮
+  │ Enter applies the highlighted text · type to request changes   │
+  │                                                          (✓)   │
+  ╰────────────────────────────────────────────────────────────────╯
+  ```
+  - A plain input with one round button: ✓ **Approve** when the input is empty and something waits
+    for approval (with auto-pause on, or a held write), ↑ **Send** otherwise. The placeholder says
+    what Enter will do.
+  - With auto-pause on: Enter on an empty input approves (focus stays for the next one), and
+    text requests changes.
+  - With auto-pause off: focus pauses the writer after its current step ("Pausing after this
+    step…"). Leaving the draft area with the input empty resumes it. Clicking from the dock into a
+    paragraph to edit it keeps the pause, and the edit is saved before the writer resumes. Text is
+    a note. A held write is still decided with the button, and a note there keeps the text. Unsent
+    text keeps the pause.
+  - After a send, the input clears and loses focus. Switching windows does not resume.
+  - A draft edited after the write was staged makes Enter **Continue without it**, and the
+    placeholder names both versions.
+  - The inline **hold bar** remains only for a held outline (**Approve outline** / **Request
+    changes**).
 
 **Outline tab**: the chapter outline and the reference notes (Markdown), plus the author's
 guidance. Its state is derived, never stored:
@@ -958,8 +989,9 @@ Source badges: **D** default, **G** global override, **B** book override.
 
 ### 8.13 Interaction details
 - **Keyboard**: ⌘/Ctrl+⏎ = primary action in context (Continue when held, Send in the
-  composer, Save in editors); Alt+P = Pause/Continue the focused session; Esc = cancel edit or
-  close dialog; ⌘/Ctrl+K = quick switch (chapters and pages of the current book).
+  composer, Save in editors); in the writer dock, plain ⏎ also submits and ⇧⏎ is a newline;
+  Alt+P = Pause/Continue the focused session; Esc = cancel edit or close dialog; ⌘/Ctrl+K =
+  quick switch (chapters and pages of the current book).
 - **Status colors** (semantic tokens): running = primary, held/paused/awaiting = amber,
   completed/official = green, failed = red, interrupted/stopped = muted.
 - **Motion**: subtle and fast (120–220 ms ease-out), layout animations for reorderable lists,
@@ -1146,6 +1178,30 @@ The author can revise them later.
     - Kickoff blocks record their prompt key from now on, and older kickoffs show numbered blocks.
     - Any two groups can sit side by side, and seven hues cannot all be told apart that way, so
       color shows three origins and the groups are named on the chart.
+37. **"A dock that is a plain input"** (D-173). The author asked for the pending-write dock to move
+    to the bottom and become a plain input with a round button. Their rules:
+    - Approve when auto-pause is on and the input is empty; text is feedback.
+    - With auto-pause off, focus pauses and blur resumes ("失去焦点时回复" read as 恢复, resume).
+    - Sending blurs the input.
+
+    Asked two questions, they chose:
+    - with auto-pause off, a note keeps the write the pause landed on;
+    - unsent text keeps the pause.
+
+    Told that an empty blur into the text would resume the writer and lock the paragraph being
+    edited, they added: "焦点移到正文时保持暂停" (moving into the text keeps the pause).
+
+    In review, a pause from the dock almost always stopped on a staged, read-only write. They then
+    chose "等这一步写完再停": the dock asks for a **step pause**. The current step's text lands,
+    the writer stops before the next request, and the panel's Pause keeps its meaning.
+
+    Read as follows:
+    - The dock exists for the whole writer session, because focus has to be able to pause a
+      running writer.
+    - `pause` gained the step pause; `resume` learned to cancel a pending pause and to keep a
+      staged write while giving feedback.
+    - A blur from switching windows, or one on a needs-attention pause, never resumes.
+    - Holds that the panel decides are not decided from the dock.
 
 ## 11. Requirement traceability
 
@@ -1155,7 +1211,7 @@ The author can revise them later.
 | Knowledge accumulation | §6.2, F3 | `spec/07`, `spec/05` (researcher tools) |
 | Writing mode and granularity | §6.3, F4b | `spec/03` §Granularity, `spec/05` (drafting tools) |
 | Chapter outlining | §6.12, F4 | `spec/03` §5.2, `spec/05` (planner tools), `spec/08` §2 |
-| User participation | §6.4, F4 | `spec/03` §5.2–§5.4 (holds), §6 (control operations), §7 (edit reports) |
+| User participation | §6.4, F4, F4b, §8.5 | `spec/03` §5.2–§5.4 (holds), §6 (control operations), §7 (edit reports), `spec/11` §5.2 (writer dock, D-173) |
 | Tiered memory | §6.5 | `spec/06-canon-memory.md` §Memory |
 | Entity graph | §6.6, F7 | `spec/06` §Entities, §Relations |
 | Timeline | §6.7, F7 | `spec/06` §Timeline (§1.4 tree and plan, D-170), `spec/05` §3, §6, `spec/10` §2.4 |

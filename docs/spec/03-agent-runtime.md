@@ -103,10 +103,13 @@ or to abandon it.
 | From | Operation | To | Notes |
 |---|---|---|---|
 | running | pause | running (`pause_requested=1`) | takes effect at the next tool boundary or before the next model request |
+| running | pause (`after_step`) | running (`pause_requested=1`, `pause_after_step=1`) | a **step pause** (D-173): the current step finishes and the session pauses before the next model request; only a call that would complete the session is held. Ignored when a pause is already pending |
 | running | stop | stopped | cancels the in-flight model request or a tool's prepare phase (spec/05 §1.2); partial output is discarded |
 | running | message | running | queued in the inbox; delivered with the next sealed tool result |
+| running (`pause_requested=1`) | resume (± feedback) | running (both pause flags 0) | cancels the pending pause; feedback queued as an inbox user message (D-173). Running without a pause pending → `409` |
 | held | resume (approve) | running | held call finalized unchanged |
 | held | resume (feedback) | running | feedback appended to the held call's result |
+| held | resume (feedback, `keep_write`) | running | as feedback, but a staged content write is applied (§5.4, D-173) |
 | held / paused | message | same | queued; delivered at the next sealing, after the held call's own feedback |
 | any open status | abandon | abandoned | a running session's request is cancelled first |
 | awaiting_input | answer | running | the answer becomes the call's result |
@@ -120,9 +123,10 @@ or to abandon it.
 Every transition goes through one function `transition(session, to, reason)` that, in the same
 transaction:
 - writes the status (and `finished_at` for terminal statuses);
-- when leaving `running`: clears `pause_requested` (a pause is consumed by the hold or pause it
-  caused), and for writer and conception sessions stores `view_snapshot` (what the agent last
-  saw, §7) unless an unreported snapshot is already stored (the oldest unreported view wins);
+- when leaving `running`: clears `pause_requested` and `pause_after_step` (a pause is consumed by
+  the hold or pause it caused), and for writer and conception sessions stores `view_snapshot`
+  (what the agent last saw, §7) unless an unreported snapshot is already stored (the oldest
+  unreported view wins);
 - emits `session.updated` after commit.
 
 ## 4. Creating a session
@@ -194,7 +198,9 @@ drive(session_id):                         # at most one runner per session (Ses
     match tail:
       NeedsModel:                           # last message is user/notice/nudge, or all calls of the last
                                             # assistant message are resolved
-        if s.pause_requested: transition(s, paused, "pause_before_request"); return
+        if fresh(s).pause_requested:        # either kind; guarded on the flag (D-173)
+            if transition(s, paused, "pause_before_request") applied: return
+            # missed: the pause was cancelled meanwhile; go on
         if rollover_needed(s): rollover(s); return            # §9
         seal_latest_batch(s)                                  # §5.3 (adds a user message instead if
                                                               # the batch is sealed and items are pending)
@@ -286,9 +292,13 @@ chapter byte-identical; feedback revokes the effects and discards the staged out
 discards it with the call. `chapters.outline` therefore holds only an accepted or author-written
 outline.
 
-`hold_condition(s, tc, outcome)`:
+`hold_condition(s, tc, outcome)` reads the pause flags **fresh**, inside the step's transaction
+(D-173), not from the session copy loaded at the loop top, so a pause cancelled meanwhile is
+honored:
 ```text
-  s.pause_requested                                                        → true
+  p ← pause flags of s, read in this transaction
+  p.pause_requested and not p.pause_after_step                             → true   # hold pause
+  p.pause_requested and p.pause_after_step and outcome.effects.complete    → true   # step pause
   s.auto_pause and tc.name ∈ WRITE_TOOLS and not outcome.is_error          → true
   tc.name = "submit_outline" and s.pause_after_outline and not is_error    → true
   otherwise                                                                → false
@@ -396,6 +406,12 @@ Every call therefore has a sealed result even in a completed session, which a re
   `notice.completion_revoked` for any other completion), followed by the feedback. The agent keeps
   working in the same phase. A staged outline is discarded with the effects; a staged content
   write likewise never reaches the chapter.
+- **Keeping a staged write** (D-173): `resume {feedback, keep_write: true}` revokes every deferred
+  effect except `pending_content`, which is then applied as on approval. A superseded write is
+  still dropped by `apply_pending_content`. The notices are composed as for any feedback: a
+  completion gets `notice.completion_revoked` before `notice.user_feedback`, so the session goes
+  on and reads the feedback. Without feedback, or on a call that staged nothing, `keep_write`
+  changes nothing.
 
 ### 5.5 `step_model`
 
@@ -470,8 +486,8 @@ table in §3. Invalid ones return `409 session.invalid_state`.
 
 | Operation | Effect |
 |---|---|
-| `pause` | `pause_requested ← 1` (running only). The UI shows "Pausing…" until the status changes |
-| `resume {feedback?}` | **held**: if feedback is present, append `notice.user_feedback` to the held call's appendices (and revoke deferred effects per §5.4); finalize the call; status → running; spawn the runner. **paused**: feedback (if any) → inbox `user_message`; clear `error` if it was a circuit-breaker pause; status → running; spawn |
+| `pause {after_step?}` | running only. Without `after_step`: `pause_requested ← 1`, `pause_after_step ← 0` (a hold pause; it upgrades a pending step pause). With `after_step: true` (D-173): both ← 1 when no pause is pending, otherwise nothing changes (a hold pause is never weakened). The UI shows "Pausing…", or "Pausing after this step…" for a step pause, until the status changes |
+| `resume {feedback?, keep_write?}` | **held**: if feedback is present, append `notice.user_feedback` to the held call's appendices (and revoke deferred effects per §5.4, keeping a staged write when `keep_write`); finalize the call; status → running; spawn the runner. **paused**: feedback (if any) → inbox `user_message`; clear `error` if it was a circuit-breaker pause; status → running; spawn. **running with a pause pending** (D-173): a guarded `pause_requested ← 0, pause_after_step ← 0 WHERE status = running AND pause_requested`; feedback (if any) → inbox `user_message`. If the guard misses, the session is re-read and the request is handled by its new status (held or paused as above), so a pause that lands meanwhile gets the same meaning. Running with no pause pending → `409 session.invalid_state` |
 | `stop` | running only. Cancels the runner's token and returns at once (the UI shows "Stopping…"). The runner is the only writer of a running session, so it performs `transition(stopped)` at its next await point: it drops a model stream without persisting it, returns a call in its prepare phase to `pending`, or, if a tool transaction is in progress, lets it commit and stops at the loop top |
 | `continue` | stopped, failed, or interrupted → running (clear `error`); spawn |
 | `message {text}` | append an inbox `user_message`. If the status is `idle`, transition to running and spawn. Rejected while `awaiting_input` (the form must be answered) and in terminal statuses |
@@ -788,6 +804,9 @@ provider.
   session is `running`, the API writes only `pause_requested`, `granularity`, `auto_pause`,
   `pause_after_outline`, `write_mode`, and inbox rows; the runner writes everything else and
   re-reads the row at every loop step, so a concurrent pause or granularity change is never lost.
+  The pause flags are read fresh where they decide something, i.e. in `hold_condition` inside the
+  step's transaction and in the guarded `pause_before_request` transition. A pause **cancelled**
+  by `resume` (D-173) is therefore never applied from a stale copy.
   The other operations of §6 (resume, answer, continue, abandon, message to an idle session) act
   on a session that is not running, inside one transaction guarded by its expected status, before
   a runner is spawned, so a double click gets `409 session.invalid_state` instead of a second
@@ -930,3 +949,18 @@ With `ScriptedProvider` (spec/04 §7) and a temp database:
     `runtime`, not under the tool. A measured request sets `scale = measured / estimate`. A held
     call without a result counts in `pending_calls` only. A `seq` that is not an assistant
     message → `400 validation.failed`.
+37. Writer dock control (`agent_control.rs`, `agent_write_holds.rs`, D-173):
+    - a step pause during an `insert_text` step does not hold it: the text is applied and the
+      session pauses before the next request. A completing call is still held;
+    - a hold pause upgrades a pending step pause, and a step pause never weakens a hold pause;
+    - `resume` on a running session with a pause pending clears both flags, so the session neither
+      holds nor pauses, and its feedback becomes one inbox user message;
+    - running with no pause pending → `409 session.invalid_state`;
+    - a cancel committed after the runner loaded its session copy is honored by that step's hold
+      decision and by the guarded `pause_before_request`;
+    - a pause that lands between `resume`'s read and its guarded update is handled by the new
+      status;
+    - `resume {feedback, keep_write}` on a held `insert_text` applies the staged paragraphs and
+      appends the feedback. With `chapter_end` it also revokes the completion, and the session
+      keeps running;
+    - a superseded write is still dropped, and plain feedback still discards the write.

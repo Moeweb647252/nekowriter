@@ -152,7 +152,11 @@
   Guards: the `entry` count is unchanged, the root count equals the book count, and no entry has
   a NULL parent. Existing foreshadowing keeps its text and gets no anchor. `0001` is not edited.
 
-## 2. Schema (0001_init.sql, upgraded by 0002_research_deferred.sql, 0003, 0004, 0005, 0006, 0007, 0008, 0009, 0010, 0011, 0012 and 0013)
+  `0014_step_pause.sql` (D-173) runs in one Rust-managed transaction and only appends:
+  `agent_sessions` gains `pause_after_step INTEGER NOT NULL DEFAULT 0`. The guards are that the
+  session count is unchanged and every row has 0. `0001` is not edited.
+
+## 2. Schema (0001_init.sql, upgraded by 0002_research_deferred.sql, 0003, 0004, 0005, 0006, 0007, 0008, 0009, 0010, 0011, 0012, 0013 and 0014)
 
 ```sql
 -- ───────────────────────────── App configuration ─────────────────────────────
@@ -660,6 +664,7 @@ CREATE TABLE agent_sessions (
   research_max_tool_calls INTEGER NOT NULL DEFAULT 40 CHECK (research_max_tool_calls >= 1),
   research_max_entries     INTEGER NOT NULL DEFAULT 25 CHECK (research_max_entries >= 1),
   pause_requested      INTEGER NOT NULL DEFAULT 0,
+  pause_after_step     INTEGER NOT NULL DEFAULT 0,      -- 0014 (D-173): a pending pause is a step pause
   held_tool_call_id    INTEGER REFERENCES agent_tool_calls(id) ON DELETE SET NULL,
   base_content_version INTEGER,                        -- chapters.content_version when the session started
   pending_comment      TEXT,                           -- reviewer: the author's re-review comment awaiting a report

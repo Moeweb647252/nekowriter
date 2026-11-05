@@ -240,6 +240,21 @@ needed. Real providers are tested when the author supplies keys.
     - A steering message sent while the agent runs appears under **From the author** once
       delivered.
     - **Context** also opens from the conception studio and from a research task page.
+20. Writer dock (M25, plan §6):
+    - Demo, auto-pause **on**: write a chapter. Each write holds and the dock's round button shows
+      ✓. Enter applies it, focus stays, and Enter applies the next one.
+    - Type "更紧凑一点" and press Enter: the highlighted text is discarded, the input clears and loses
+      focus, and the agent rewrites.
+    - Auto-pause **off**: click into the dock. The panel shows "Pausing after this step…"; the
+      step's paragraphs land without a highlight, then the writer is paused. Type "下一段转到对手视角" and
+      press Enter: the input loses focus, and the writer goes on and follows the note.
+    - Click into the dock, wait for the pause, click a paragraph and edit it, then click the chapter
+      header: the edit is saved, the writer resumes, and its next result carries the edit report.
+    - Click into the dock and out with the input empty: the writer resumes. With a word typed, it
+      stays paused until the word is sent or cleared. Switching browser tabs resumes nothing.
+    - With auto-pause off, press **Pause** in the panel during a write: the write holds and the dock
+      shows ✓; a note keeps the paragraphs. Edit the draft during such a hold and approve: the
+      dock names both versions and continues without the staged text.
 
 ## M12 — Outline and write sessions
 
@@ -429,3 +444,15 @@ kickoff; tool results stay one part per tool.
 | 24.2 | **Prompt pack and assembly**: the eight sub-block keys, `kickoff_blocks`, validator and samples. The concatenation of the sub-blocks equals today's parent rendering byte for byte. | 03 §10; 09 §2 | plan §2; `kickoff_baseline` diff per kind |
 | 24.3 | **Context labels**: `agent:context.block.*` for the eight keys, both locales; the treemap shows them. | 11 §5.3 | Vitest; `i18n:check` |
 | 24.4 | **Smoke**: smoke item 19 on a write session, compared with the sidebar. | PLAN §M11.5 | screenshots; D-172 consequences |
+
+## M25 — Writer dock
+
+Plan: `docs/research/writer-dock-plan.md` (D-173). It follows M24 and depends on neither M23 nor
+M24. Execute in order, one commit per task.
+
+| # | Task | Spec | Tests / acceptance |
+|---|---|---|---|
+| 25.1 | **Docs**: done with the plan (D-173). Re-read the amended sections; fix any a code fact contradicts and note it in D-173. | plan §7 | `check.sh` green (docs only) |
+| 25.2 | **Server**: `0014_step_pause` and its guard; the entity, `SessionDto.pause_after_step` and `ToolCallDto.completes`; `PauseInput.after_step`; fresh pause flags in the hold decision and a guarded `pause_before_request`; `resume` on a running session with a pause pending (guarded clear, feedback to the inbox, re-read on a miss); `ResumeInput.keep_write`; bindings. | 02 §1, §2; 03 §3, §5.1, §5.2, §5.4, §6, §14; 10 §2.7, §2.8 | plan §5.1; spec/03 §15 #37; `entity_schema.rs` fresh and upgraded |
+| 25.3 | **Web**: `writerDock.ts` (the spec/11 §5.2 table, `ownPause`), `WriterDock.tsx`, `useDraftRegionFocus` and the content `mutationKey`, the Text tab column layout, the serial request queue, "Pausing after this step…" in `SessionControls`, removing `PendingWriteDock` and its unused keys; both locales. | 11 §5.2, §5.3, §9; PROJECT §6.4, §8.5, §8.13 | plan §5.2 Vitest; `i18n:check` |
+| 25.4 | **Smoke**: smoke item 20 with the Demo provider. | PLAN §M11.5 | the checklist passes |

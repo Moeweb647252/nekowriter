@@ -4190,3 +4190,70 @@ as before. The Demo provider now exercises the path spec/04 §7.2 describes, and
   the new key. `kickoff_baseline` changes shape (one block becomes four) and must be reviewed per
   session kind. A prompt edit that changes one section's text still changes only that section's part
   in the treemap.
+
+### D-173 The writer dock is one input; with auto-pause off, focus asks for a step pause
+
+- **Context**:
+  - The author asked for the pending-write dock to move to the bottom of the draft pane and become
+    a plain input with a round button. With auto-pause on, an empty input approves; text is
+    feedback. With auto-pause off, focus pauses and blur resumes ("失去焦点时回复", read as 恢复).
+    Sending blurs the input.
+  - Their answers (2026-11-05):
+    - with auto-pause off, a note keeps the writer's latest write and guides what follows;
+    - unsent text keeps the pause until it is sent or cleared;
+    - moving from the dock into the draft text keeps the pause ("焦点移到正文时保持暂停");
+    - in review, they chose that a dock pause takes effect **after the current step**
+      ("等这一步写完再停").
+  - Code facts:
+    - A pause holds the next call, and a writer spends most of its time in the model request. A
+      focus pause therefore almost always stopped on a staged write, whose merged view is
+      read-only (D-141), so editing after a dock pause was impossible.
+    - `step_tool` decides the hold with the session copy loaded at the loop top.
+    - `resume` refused a running session, so a pending pause could not be cancelled.
+    - Feedback revoked every deferred effect, so it always discarded a staged write.
+    - `PendingWriteDock` rendered only while a staged write was held.
+    - PROJECT §8.5 and F4b still described the pre-D-141 inline hold bar for writes.
+- **Decision** (plan `docs/research/writer-dock-plan.md`):
+  - **One dock for the writer session.** `WriterDock` replaces `PendingWriteDock`.
+    - It is a non-scrolling footer of the Text tab, shown while a `chapter_write` or
+      `chapter_revise` session in `drafting` or `revising` is running, held or paused.
+    - It has an auto-growing input and one round button: ✓ Approve or ↑ Send. The placeholder
+      carries the state, including D-141's superseded versions.
+  - **A step pause.** `pause {after_step: true}` sets a new `pause_after_step` flag (0014).
+    - An ordinary call is not held: the step's write lands, and the session pauses before the next
+      model request.
+    - A call that would complete the session is still held, so a note can come before review.
+    - The panel's Pause stays a hold pause, and a hold pause wins over a step pause.
+  - **Auto-pause on.** With an empty input, Enter approves, and focus stays. Text is feedback on a
+    hold or pause (a staged write is discarded, as before), or a steering message while running.
+  - **Auto-pause off.**
+    - Focus on a running writer asks for a step pause, which the dock remembers as its own.
+    - Text is `resume {feedback}`, which cancels the pending pause or resumes and queues the note.
+    - Leaving the draft region (the reading column and the dock) with an empty input resumes the
+      dock's own pause, after any in-flight save. Moving into the text, unsent text, and a window
+      switch keep it.
+  - **Holds are decided explicitly** with the button, whatever the setting. Leaving never decides
+    one. With auto-pause off, a note on a held write keeps it (`keep_write`).
+  - **`resume` gains two cases.**
+    - On a running session with a pause pending, it clears both flags and queues the feedback.
+      When the guard misses, it is handled by the new status.
+    - `keep_write` keeps a staged write while the other deferred effects are revoked. A completion
+      gets `notice.completion_revoked`.
+  - **Fresh pause flags.** The hold decision and the `pause_before_request` transition read the
+    flags inside their transaction, so a cancelled pause is never applied from a stale copy.
+  - No new endpoint and no new prompt. One decision surface stays: the dock decides only staged
+    writes (D-141).
+- **Consequences**:
+  - Approving a run of auto-pause holds is Enter, Enter, Enter.
+  - With auto-pause off, talking to the writer is click, type, Enter: its step lands, and the note
+    guides the next. Editing is click into the dock, then into the text, then out.
+  - `SessionDto.pause_after_step` lets the panel say "Pausing after this step…".
+    `ToolCallDto.completes` lets the dock say a held write would finish the chapter.
+  - The old card's strings go, and PROJECT §8.5 and F4b now describe the dock instead of the
+    stale hold bar.
+- **Spec**:
+  - PROJECT §6.4, F4b, §8.5, §8.13, §10 (#37), §11;
+  - spec/02 §1, §2;
+  - spec/03 §3, §5.1, §5.2, §5.4, §6, §14, §15 (#37);
+  - spec/10 §2.7, §2.8;
+  - spec/11 §5.2, §5.3, §9.
