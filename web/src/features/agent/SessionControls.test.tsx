@@ -133,7 +133,7 @@ describe("SessionControls", () => {
 })
 
 it("labels a pending step pause as pausing after this step", () => {
-  renderControls(noop, { status: "running", pause_requested: true, pause_after_step: true })
+  renderControls(noop, { status: "running", pause_requested: false, pause_after_step: true })
   expect(screen.getByRole("button", { name: "Pausing after this step…" })).toBeInTheDocument()
   expect(screen.queryByRole("button", { name: "Pausing…" })).not.toBeInTheDocument()
 })

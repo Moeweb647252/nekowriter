@@ -347,3 +347,30 @@ async fn keep_write_drops_a_superseded_staged_write() {
     let content = chapter_content(&runtime, runtime.chapter_id).await;
     assert_eq!(content.paragraphs[0].text, "作者改写后的段落。");
 }
+
+/// S-1: entering `running` from `paused` clears both pause flags, including a ling step flag.
+#[tokio::test]
+async fn resume_from_paused_clears_a_lingering_step_flag() {
+    use nekowriter::db::entities::agent_sessions;
+    use sea_orm::{EntityTrait, QueryFilter};
+
+    let runtime = runtime(vec![insert_step("第一段。", false)]).await;
+    let id = start_writer(&runtime, Granularity::Paragraph, false, false).await;
+    tokio::time::sleep(Duration::from_millis(80)).await;
+    let _ = pause(&runtime, id, json!({ "after_step": true })).await;
+    runtime.wait_status(id, SessionStatus::Paused).await;
+    agent_sessions::Entity::update_many()
+        .set(agent_sessions::ActiveModel {
+            pause_after_step: sea_orm::Set(true),
+            ..Default::default()
+        })
+        .filter(agent_sessions::COLUMN.id.eq(id))
+        .exec(runtime.app.db().conn())
+        .await
+        .expect("seed a leaked flag");
+    let (status, body) = resume(&runtime, id, json!({ "feedback": "继续" })).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let row = runtime.session_row(id).await;
+    assert_eq!(row.pause_requested, 0);
+    assert_eq!(row.pause_after_step, 0, "set_status clears both flags");
+}

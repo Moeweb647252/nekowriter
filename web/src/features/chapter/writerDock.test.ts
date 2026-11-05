@@ -52,19 +52,73 @@ describe("writerDockState", () => {
 
   it("auto-pause off: focus requests a step pause, text sends feedback", () => {
     const off = session({ auto_pause: false })
-    expect(state({ session: off })).toMatchObject({ onFocus: "pause_after_step", submit: null })
-    expect(state({ session: off, ownPause: true })).toMatchObject({ onLeave: "resume" })
-    expect(state({ session: off, ownPause: true, text: "note" })).toMatchObject({ submit: "feedback" })
-    expect(state({ session: off, text: "note" }).submit).toBe("feedback")
-  })
-
-  it("paused sessions approve or send; the dock's own pause also resumes on leave", () => {
-    const paused = session({ status: "paused" })
-    expect(state({ session: paused })).toMatchObject({ button: "approve", submit: "resume" })
-    expect(state({ session: paused, text: "note" })).toMatchObject({ submit: "feedback" })
-    expect(state({ session: { ...paused, auto_pause: false }, ownPause: true })).toMatchObject({
+    expect(state({ session: off })).toMatchObject({
+      button: "send",
+      buttonEnabled: false,
+      onFocus: "pause_after_step",
+      submit: null,
+    })
+    expect(state({ session: off, text: "note" })).toMatchObject({
+      button: "send",
+      buttonEnabled: true,
+      submit: "feedback",
+    })
+    expect(state({ session: off, ownPause: true })).toMatchObject({
+      button: "send",
+      buttonEnabled: false,
       onLeave: "resume",
     })
+    expect(state({ session: off, ownPause: true, text: "note" })).toMatchObject({
+      buttonEnabled: true,
+      submit: "feedback",
+    })
+  })
+
+  it("paused sessions: auto-pause on approves; off leaves Send disabled unless text is present", () => {
+    const paused = session({ status: "paused" })
+    expect(state({ session: paused })).toMatchObject({
+      button: "approve",
+      buttonEnabled: true,
+      submit: "resume",
+    })
+    expect(state({ session: paused, text: "note" })).toMatchObject({ submit: "feedback" })
+    const off = { ...paused, auto_pause: false }
+    expect(state({ session: off, ownPause: true })).toMatchObject({
+      button: "send",
+      buttonEnabled: false,
+      submit: null,
+      onLeave: "resume",
+    })
+    expect(state({ session: off, ownPause: false })).toMatchObject({
+      button: "send",
+      buttonEnabled: false,
+      submit: null,
+      onLeave: null,
+    })
+    expect(state({ session: off, ownPause: true, text: "note" })).toMatchObject({
+      buttonEnabled: true,
+      submit: "feedback",
+      onLeave: null,
+    })
+  })
+
+  it("uses the server step flag when a reload loses the local ownPause bit", () => {
+    const off = session({ auto_pause: false, pause_requested: true, pause_after_step: true })
+    expect(state({ session: off, ownPause: false })).toMatchObject({
+      state: "off_pausing",
+      submit: null,
+      onLeave: "resume",
+    })
+  })
+
+  it("marks a superseded held write and keeps only the keep-write action with text", () => {
+    const off = session({ auto_pause: false })
+    expect(
+      state({ session: off, held: call(), surface: "dock", standing: "superseded", text: "note" }),
+    ).toMatchObject({ state: "superseded", submit: "feedback_keep", buttonEnabled: true })
+    expect(
+      state({ session: off, held: call(), surface: "dock", standing: "superseded" }),
+    ).toMatchObject({ state: "superseded", submit: "approve" })
   })
 
   it("panel-owned holds disable the dock and auto-pause-off holds keep the write", () => {

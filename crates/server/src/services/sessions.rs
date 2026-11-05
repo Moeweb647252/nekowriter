@@ -2784,9 +2784,11 @@ async fn set_status(
         updated_at: Set(now),
         ..Default::default()
     };
+    // A transition into `running` never carries a stale step-pause request, even when the caller
+    // does not clear the hold-pause flag.
+    active.pause_after_step = Set(false);
     if clear_pause {
         active.pause_requested = Set(false);
-        active.pause_after_step = Set(false);
     }
     // A status change that leaves `running` clears the pause flag and captures the snapshot, so
     // those operations must go through `transition`; these paths all enter `running`.

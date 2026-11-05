@@ -68,6 +68,7 @@ export function writerDockState(input: WriterDockInput): WriterDockState {
   const dockHeld = held !== undefined && surface === "dock"
   const heldCompletes = held?.completes === true
   const off = session?.auto_pause === false
+  const stepPause = session?.pause_after_step === true
   const state = (name: string, values: Partial<WriterDockState>): WriterDockState => ({
     visible: true,
     disabled: false,
@@ -101,7 +102,7 @@ export function writerDockState(input: WriterDockInput): WriterDockState {
         submit: hasText ? "feedback" : "approve",
       })
     }
-    return state(hasText ? "held_keep" : "held", {
+    return state(superseded ? "superseded" : hasText ? "held_keep" : "held", {
       button: hasText ? "send" : "approve",
       buttonEnabled: true,
       submit: hasText ? "feedback_keep" : "approve",
@@ -109,19 +110,28 @@ export function writerDockState(input: WriterDockInput): WriterDockState {
   }
 
   if (session?.status === "paused") {
-    // Auto-pause on, or the dock's own pause: the empty button continues.
-    if (!off || ownPause) {
-      return state(ownPause ? "off_paused" : "on_paused", {
+    if (!off) {
+      // Auto-pause on: the empty button continues.
+      return state("on_paused", {
         button: hasText ? "send" : "approve",
         buttonEnabled: true,
         submit: hasText ? "feedback" : "resume",
-        onLeave: ownPause && !hasText ? "resume" : null,
+      })
+    }
+    if (ownPause || stepPause) {
+      // The dock's own pause (possibly restored from a reload): leaving with an empty input
+      // resumes; with text it keeps the pause until the text is sent or cleared.
+      return state("off_paused", {
+        button: "send",
+        buttonEnabled: hasText,
+        submit: hasText ? "feedback" : null,
+        onLeave: hasText ? null : "resume",
       })
     }
     return state("other_paused", {
-      button: hasText ? "send" : "approve",
-      buttonEnabled: true,
-      submit: hasText ? "feedback" : "resume",
+      button: "send",
+      buttonEnabled: hasText,
+      submit: hasText ? "feedback" : null,
       onLeave: null,
     })
   }
@@ -135,9 +145,9 @@ export function writerDockState(input: WriterDockInput): WriterDockState {
     })
   }
 
-  if (ownPause) {
-    return state(hasText ? "off_pausing" : "off_pausing", {
-      button: hasText ? "send" : "approve",
+  if (ownPause || stepPause) {
+    return state("off_pausing", {
+      button: "send",
       buttonEnabled: hasText,
       submit: hasText ? "feedback" : null,
       onLeave: hasText ? null : "resume",
@@ -152,7 +162,7 @@ export function writerDockState(input: WriterDockInput): WriterDockState {
   }
   return state("off_running", {
     button: "send",
-    buttonEnabled: false,
+    buttonEnabled: hasText,
     submit: hasText ? "feedback" : null,
     onFocus: "pause_after_step",
   })
