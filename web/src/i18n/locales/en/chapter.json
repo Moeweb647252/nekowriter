@@ -195,5 +195,7 @@
       "panel_hold": "This held step is decided in the agent panel.",
       "hidden": ""
     }
-  }
+  },
+  "locked_live_words": "The writer is working — pause to edit · {{words}} words in this version",
+  "submit_running_hint": "The writer is running. Pause or stop it to submit."
 }

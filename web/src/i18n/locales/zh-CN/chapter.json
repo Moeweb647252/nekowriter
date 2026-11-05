@@ -195,5 +195,7 @@
       "panel_hold": "这个暂停的步骤在助手面板处理。",
       "hidden": ""
     }
-  }
+  },
+  "locked_live_words": "写作者正在写，暂停后可修改 · 当前版本 {{words}} 字",
+  "submit_running_hint": "写作者正在运行，暂停或停止后才能提交。"
 }

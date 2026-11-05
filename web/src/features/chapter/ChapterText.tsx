@@ -216,30 +216,31 @@ export function ChapterText({
     )
   }
 
+  const statusText =
+    locked
+      ? t("chapter:locked_live_words", { words: liveWords })
+      : pendingView === undefined
+        ? t("chapter:live_words", { words: liveWords })
+        : t("chapter:pending_live_words", {
+            staged: pendingView.stagedWords,
+            confirmed: pendingView.confirmedWords,
+          })
+
   return (
     <div className="mx-auto max-w-[42em]">
-      {locked ? (
-        <div
-          className="mb-3 flex items-center gap-2 rounded-md border border-status-running/40 bg-status-running/10 px-3 py-2 text-xs text-muted-foreground"
-          role="status"
-        >
-          <Lock className="size-3.5 shrink-0" aria-hidden="true" />
-          {t("chapter:locked_banner")}
-        </div>
-      ) : null}
       <div className="mb-4 flex items-center justify-between gap-2">
         {/*
-          The count is stated for the document on screen, and named when that is not the confirmed
-          draft: the header shows the server's confirmed count (spec/11 §8), so an unlabelled
-          different number here would contradict it instead of agreeing with it.
+          The status row carries the lock line: the same height in every state, with the icon in the
+          running tint. The full sentence lives in `title`; the visible line truncates rather than
+          wrapping and moving the text below it (D-174 §3.5).
         */}
-        <p className="text-xs text-muted-foreground">
-          {pendingView === undefined
-            ? t("chapter:live_words", { words: liveWords })
-            : t("chapter:pending_live_words", {
-                staged: pendingView.stagedWords,
-                confirmed: pendingView.confirmedWords,
-              })}
+        <p
+          className="flex min-w-0 items-center gap-1 text-xs text-muted-foreground"
+          role={locked ? "status" : undefined}
+          title={statusText}
+        >
+          {locked ? <Lock className="size-3.5 shrink-0 text-status-running" aria-hidden="true" /> : null}
+          <span className="truncate">{statusText}</span>
         </p>
         <Button
           size="sm"
@@ -254,10 +255,11 @@ export function ChapterText({
       </div>
       {pendingView !== undefined ? (
         <PendingText paragraphs={pendingView.paragraphs} unspaced={unspaced} />
-      ) : paragraphs.length === 0 ? (
+      ) : paragraphs.length === 0 && writer.preview === undefined ? (
         <EmptyState title={t("chapter:empty_title")} description={t("chapter:empty_text")} />
       ) : (
         <div className={unspaced ? "prose-cjk" : "prose-latin"}>
+          {paragraphs.length === 0 ? <GhostText preview={writer.preview} /> : null}
           <AnimatePresence initial={false}>
             {paragraphs.map((paragraph, index) => (
               <Fragment key={paragraph.pid}>

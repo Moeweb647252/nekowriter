@@ -32,12 +32,16 @@ export function PendingText({ paragraphs, unspaced }: PendingTextProps) {
             data-pid={paragraph.pid}
             data-kind={paragraph.kind}
             title={paragraph.pid}
-            className={paragraph.kind === "added" ? "rounded-sm bg-status-waiting/15" : "rounded-sm"}
+            className={
+              paragraph.kind === "added"
+                ? "pending-new rounded-sm bg-status-waiting/15"
+                : "rounded-sm"
+            }
           >
             {paragraph.kind === "changed" && paragraph.highlightFrom !== undefined ? (
               <>
                 {paragraph.text.slice(0, paragraph.highlightFrom)}
-                <span className="bg-status-waiting/30">
+                <span className="pending-new bg-status-waiting/30">
                   {paragraph.text.slice(paragraph.highlightFrom)}
                 </span>
               </>
