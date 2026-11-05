@@ -19,7 +19,7 @@ import { Textarea } from "@/components/ui/textarea"
 import { isComposing } from "@/lib/hotkeys"
 
 /** The live preview of one in-flight tool call (spec/11 §4.3 `live.previews`). */
-export type Preview = { name: string; field: string; text: string; pinned?: boolean }
+export type Preview = { name: string; field: string; text: string; pinned?: { version: number } }
 
 /** The writer tools whose preview field is the prose they are about to write (spec/03 §12). */
 const TEXT_PREVIEW_TOOLS = ["insert_text", "insert_paragraphs", "rewrite_paragraph"]
@@ -51,14 +51,14 @@ export function GhostText({
     return (
       <span className="ghost-text" aria-live="polite">
         {preview.text}
-        {preview.pinned === true ? null : <span className="ghost-caret" aria-hidden="true" />}
+        {preview.pinned !== undefined ? null : <span className="ghost-caret" aria-hidden="true" />}
       </span>
     )
   }
   return (
     <p className="ghost-text" aria-live="polite">
       {preview.text}
-      {preview.pinned === true ? null : <span className="ghost-caret" aria-hidden="true" />}
+      {preview.pinned !== undefined ? null : <span className="ghost-caret" aria-hidden="true" />}
     </p>
   )
 }

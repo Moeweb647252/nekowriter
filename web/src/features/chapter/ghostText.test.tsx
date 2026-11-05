@@ -32,7 +32,7 @@ describe("GhostText", () => {
   it("pins a handed-off writer preview without a caret", () => {
     const { container } = render(
       <GhostText
-        preview={{ name: "insert_text", field: "text", text: "已写完的一句。", pinned: true }}
+        preview={{ name: "insert_text", field: "text", text: "已写完的一句。", pinned: { version: 4 } }}
       />,
     )
     expect(container.querySelector(".ghost-text")?.textContent).toContain("已写完的一句。")

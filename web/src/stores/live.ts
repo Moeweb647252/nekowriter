@@ -10,7 +10,7 @@ type Stream = {
   reasoning: Record<number, string>
 }
 
-type Preview = { name: string; field: string; text: string; pinned?: boolean }
+type Preview = { name: string; field: string; text: string; pinned?: { version: number } }
 
 /** Writer tools whose preview is pinned across the persisted-message handoff (spec/11 §5.2). */
 const PINNABLE_PREVIEW_TOOLS = new Set(["insert_text", "insert_paragraphs", "rewrite_paragraph"])
@@ -29,9 +29,10 @@ type LiveState = {
     field: string,
     delta: string,
   ) => void
-  clearSeq: (sessionId: number, seq: number, keepWriterPreviews?: boolean) => void
+  clearSeq: (sessionId: number, seq: number, pinVersion?: number) => void
   clearPreview: (sessionId: number, seq: number, callIndex: number) => void
   clearSessionPreviews: (sessionId: number) => void
+  clearAllPreviews: () => void
 }
 
 export const useLiveStore = create<LiveState>()((set) => ({
@@ -84,7 +85,7 @@ export const useLiveStore = create<LiveState>()((set) => ({
         },
       }
     }),
-  clearSeq: (sessionId, seq, keepWriterPreviews = false) =>
+  clearSeq: (sessionId, seq, pinVersion) =>
     set((state) => {
       const streams = { ...state.streams }
       const current = streams[sessionId]
@@ -98,8 +99,8 @@ export const useLiveStore = create<LiveState>()((set) => ({
           // The persisted message is not yet the visible draft for a writer tool: keep its
           // sentence pinned (no caret) until the call or chapter content replaces it. Other
           // previews are superseded immediately.
-          if (keepWriterPreviews && PINNABLE_PREVIEW_TOOLS.has(preview.name)) {
-            return [[key, { ...preview, pinned: true }]]
+          if (pinVersion !== undefined && PINNABLE_PREVIEW_TOOLS.has(preview.name)) {
+            return [[key, { ...preview, pinned: { version: pinVersion } }]]
           }
           return []
         }),
@@ -120,6 +121,7 @@ export const useLiveStore = create<LiveState>()((set) => ({
         Object.entries(state.previews).filter(([key]) => !key.startsWith(`${sessionId}:`)),
       ),
     })),
+  clearAllPreviews: () => set({ previews: {} }),
 }))
 
 function previewName(existing: Preview | undefined, name: string): string {

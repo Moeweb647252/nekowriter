@@ -210,7 +210,7 @@ describe("delta coalescing", () => {
     const client = seededClient()
     client.setQueryData(keys.sessions.detail(13), {
       session: { id: 13, status: "held" },
-      messages: [],
+      messages: [{ message: { id: 7, seq: 4 }, tool_calls: [] }],
       tool_calls: [],
       inbox: [],
       inbox_pending: 0,
@@ -219,12 +219,14 @@ describe("delta coalescing", () => {
     })
     applyServerEvent(client, "session.tool_call", {
       session_id: 13,
-      tool_call: { id: 2, seq: 4, call_index: 0, name: "insert_text", status: "held" },
+      tool_call: { id: 2, message_id: 7, seq: 4, call_index: 0, name: "insert_text", status: "held" },
     })
-    expect(
-      client.getQueryData<{ tool_calls: { id: number }[] }>(keys.sessions.detail(13))
-        ?.tool_calls[0]?.id,
-    ).toBe(2)
+    const snapshot = client.getQueryData<{
+      tool_calls: { id: number }[]
+      messages: { tool_calls: { id: number }[] }[]
+    }>(keys.sessions.detail(13))
+    expect(snapshot?.tool_calls[0]?.id).toBe(2)
+    expect(snapshot?.messages[0]?.tool_calls[0]?.id).toBe(2)
   })
 
   afterEach(() => { vi.useRealTimers() })
@@ -278,6 +280,7 @@ describe("delta coalescing", () => {
 
   it("pins a writer preview across the persisted message instead of deleting it", () => {
     const client = new QueryClient()
+    useChapterDoc.setState({ version: 4 })
     useLiveStore.setState({
       streams: {},
       previews: {
@@ -288,16 +291,51 @@ describe("delta coalescing", () => {
     applyServerEvent(client, "session.message", { session_id: 13, message: { id: 9, seq: 4 } })
     expect(useLiveStore.getState().previews["13:4:0"]).toMatchObject({
       text: "写了一半",
-      pinned: true,
+      pinned: { version: 4 },
     })
     expect(useLiveStore.getState().previews["13:4:1"]).toBeUndefined()
+  })
+
+  it("does not clear a pinned preview on a held update or chapter content", () => {
+    const client = new QueryClient()
+    useChapterDoc.getState().load(9, 4, { paragraphs: [], next_pid: 1, tail_open: true })
+    useLiveStore.setState({
+      streams: {},
+      previews: { "13:4:0": { name: "insert_text", field: "text", text: "写完了", pinned: { version: 4 } } },
+    })
+    applyServerEvent(client, "session.updated", {
+      session: { id: 13, status: "held", chapter_id: 9 },
+    })
+    expect(useLiveStore.getState().previews["13:4:0"]).toBeDefined()
+    applyServerEvent(client, "chapter.content", {
+      chapter_id: 9,
+      version: 5,
+      ops: [],
+      word_count: 1,
+      tail_open: false,
+      actor: "agent",
+    })
+    expect(useLiveStore.getState().previews["13:4:0"]).toBeDefined()
+  })
+
+  it("clears a pinned preview when a call finishes done", () => {
+    const client = new QueryClient()
+    useLiveStore.setState({
+      streams: {},
+      previews: { "13:4:0": { name: "insert_text", field: "text", text: "写完了", pinned: { version: 4 } } },
+    })
+    applyServerEvent(client, "session.tool_call", {
+      session_id: 13,
+      tool_call: { id: 2, seq: 4, call_index: 0, name: "insert_text", status: "done" },
+    })
+    expect(useLiveStore.getState().previews["13:4:0"]).toBeUndefined()
   })
 
   it("clears a pinned preview when the staged call is written into the cache", () => {
     const client = seededClient()
     useLiveStore.setState({
       streams: {},
-      previews: { "13:4:0": { name: "insert_text", field: "text", text: "写完了", pinned: true } },
+      previews: { "13:4:0": { name: "insert_text", field: "text", text: "写完了", pinned: { version: 4 } } },
     })
     client.setQueryData(keys.sessions.detail(13), {
       session: { id: 13, status: "held" },
