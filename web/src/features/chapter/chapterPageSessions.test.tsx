@@ -267,7 +267,7 @@ describe("ChapterPage draft layout", () => {
     const { container } = renderPage("text", 900)
     await screen.findByText("A 的正文", {}, { timeout: 3000 })
     const root = container.querySelector(":scope > div > div") as HTMLElement
-    expect(root.className).toContain("h-full")
+    expect(root.className).toContain("flex-1")
     expect(root.className).toContain("min-h-0")
     expect(root.className).toContain("flex-col")
     const tabs = root.querySelector(":scope > [data-slot=tabs]") as HTMLElement

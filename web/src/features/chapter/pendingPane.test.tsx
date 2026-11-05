@@ -137,15 +137,6 @@ describe("PendingText", () => {
     expect(screen.getByText("智能体新写的一段。")).toHaveAttribute("data-kind", "added")
   })
 
-  it("says the text is a preview, so the tint is not the only signal", () => {
-    render(<PendingText paragraphs={VIEW.paragraphs} unspaced />)
-    expect(
-      screen.getByText(
-        "Preview: the highlighted paragraphs are the agent's text, not part of your draft yet.",
-      ),
-    ).toBeInTheDocument()
-  })
-
   it("renders read-only while the chapter's owner is working", async () => {
     writer.locked = true
     renderPane()

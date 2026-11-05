@@ -136,7 +136,6 @@
   "delete.is_anchor": "本章是某些番外的时间锚点，暂时无法删除：",
   "delete.is_anchor_hint": "先把下面的番外改到别的锚点章节，再删除本章。",
   "delete.side_story_ref": "番外 #{{id}}",
-  "pending_preview_note": "预览：高亮段落是智能体写的，还没有进入你的草稿。",
   "pending_live_words": "应用后 {{staged}} 字（当前 {{confirmed}} 字）",
   "word_count_projected": "智能体正文应用后的字数（仅为预览，尚未写入）",
   "word_count_projected_suffix": "应用后",

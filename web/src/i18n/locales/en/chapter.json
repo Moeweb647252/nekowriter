@@ -136,7 +136,6 @@
   "delete.is_anchor": "This chapter anchors a side story, so it cannot be deleted yet:",
   "delete.is_anchor_hint": "Point each side story below at another anchor chapter, then delete this one.",
   "delete.side_story_ref": "Side story #{{id}}",
-  "pending_preview_note": "Preview: the highlighted paragraphs are the agent's text, not part of your draft yet.",
   "pending_live_words": "{{staged}} words once applied ({{confirmed}} now)",
   "word_count_projected": "Word count once the staged write applies (projection only, not stored)",
   "word_count_projected_suffix": "once applied",

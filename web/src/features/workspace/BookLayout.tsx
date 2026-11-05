@@ -166,7 +166,7 @@ export default function BookLayout() {
             className={
               isConception
                 ? "flex h-full min-h-0 flex-col"
-                : "relative min-h-full"
+                : "relative flex min-h-full flex-col"
             }
           >
             {/*

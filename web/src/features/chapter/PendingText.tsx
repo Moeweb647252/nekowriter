@@ -10,11 +10,9 @@
  * The text is deliberately **not editable** here. It is not what the draft holds: a click would
  * edit a paragraph whose text the author is not looking at, and the save would bump the chapter's
  * version, which is exactly what makes a staged write stale (spec/03 §5.2). The pane returns to the
- * normal editable document once the decision is made. The note above the text says where it came
- * from, so the tint is never the only signal.
+ * normal editable document once the decision is made. The waiting tint is the only marker; the
+ * author asked for the explanatory note above the text to be removed.
  */
-import { useTranslation } from "react-i18next"
-
 import { cn } from "@/lib/utils"
 import type { PendingParagraph } from "@/features/chapter/pendingWrite"
 
@@ -25,15 +23,8 @@ export type PendingTextProps = {
 }
 
 export function PendingText({ paragraphs, unspaced }: PendingTextProps) {
-  const { t } = useTranslation()
   return (
     <div>
-      <p
-        className="mb-3 rounded-md border border-status-waiting/40 bg-status-waiting/10 px-3 py-2 text-xs text-muted-foreground"
-        role="status"
-      >
-        {t("chapter:pending_preview_note")}
-      </p>
       <div className={unspaced ? "prose-cjk" : "prose-latin"}>
         {paragraphs.map((paragraph) => (
           <p
