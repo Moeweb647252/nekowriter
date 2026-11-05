@@ -55,7 +55,6 @@ export function useSessionToasts(session: SessionDto | undefined) {
     }
     const key = `agent:toast.${notification}`
     switch (notification) {
-      case "held":
       case "awaiting_input":
         toast.message(t(key))
         break

@@ -2,9 +2,14 @@
 
 .prose-cjk {
   font-family: "Noto Serif SC", "Source Han Serif SC", "Songti SC", "SimSun", serif;
-  text-indent: 2em;
+  /* The indent belongs to the paragraphs, not the column: a container indent compounds with every
+     nested block, which doubled the streamed ghost's first line. */
   margin: 0;
   line-height: 1.9;
+}
+
+.prose-cjk p {
+  text-indent: 2em;
 }
 
 .prose-latin {

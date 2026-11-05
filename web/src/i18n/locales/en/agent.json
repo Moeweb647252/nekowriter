@@ -151,7 +151,6 @@
     "hint_detail": "Tool results are part of the conversation and never change afterwards."
   },
   "toast": {
-    "held": "The agent is waiting for your review.",
     "awaiting_input": "The agent has a question for you.",
     "failed": "The session failed. You can continue it.",
     "completed": "The session finished."
