@@ -334,14 +334,14 @@ Without `book_id` it sends everything.
 
 | `type` | Payload | Frontend reaction |
 |---|---|---|
-| `session.updated` | `{ session: SessionDto }` | update the live store; invalidate `["sessions", …]`, and the chapter's detail key (`["chapters", "detail", session.chapter_id]`) when the session has a chapter — `ChapterDto.open_sessions` is what the chapter pane locks on and where it finds a held write (D-144); a session with no chapter (conception, research, canon seed) invalidates no chapter |
-| `session.message` | `{ session_id, message: MessageDto }` | append to the activity stream; drop the stream buffer for that seq |
+| `session.updated` | `{ session: SessionDto }` | write the session into its snapshot, and into the chapter's `open_sessions` when the session has a chapter (a terminal status removes it there): `ChapterDto.open_sessions` is what the chapter pane locks on and where it finds a held write (D-144, D-174); a session with no chapter (conception, research, canon seed) touches no chapter; invalidate the book's session list; a status other than `running` or `held` drops the session's previews |
+| `session.message` | `{ session_id, message: MessageDto }` | append to the activity stream (invalidate the snapshot); drop the stream buffer for that seq; pin a writer tool's preview to the draft version on screen (spec/11 §4.3, D-174) |
 | `session.delta` | `{ session_id, seq, kind: "text" \| "reasoning", index, text }` | append to the live buffer |
-| `session.tool_call` | `{ session_id, tool_call: ToolCallDto }` | upsert the card; no chapter invalidation of its own — `ToolCallDto` carries no chapter, and every tool call is published beside a `session.updated` (D-144) |
+| `session.tool_call` | `{ session_id, tool_call: ToolCallDto }` | upsert the call into the snapshot's `tool_calls` and into its message's `tool_calls`; `done` or `error` drops its preview; no chapter write of its own — `ToolCallDto` carries no chapter, and every tool call is published beside a `session.updated` (D-144) |
 | `session.tool_preview` | `{ session_id, seq, call_index, name, field, delta }` | append to the preview buffer (ghost text) |
 | `book.updated` | `{ book_id, op: "create" \| "update" \| "delete" }` (book row or its tracks: create, edit, finalize, archive) | invalidate the library, the book, and its tracks |
 | `chapter.updated` | `{ chapter: ChapterListItemDto, outline_changed: boolean }` | update lists; invalidate the chapter query when the outline changed; invalidate the book's goal nodes and overview (an approval can make `chapter_at_least` true, spec/06 §11.3) |
-| `chapter.content` | `{ chapter_id, version, ops: ContentOp[], word_count, tail_open, actor: "agent" \| "user" }` | apply the ops if `version = local + 1`, else refetch |
+| `chapter.content` | `{ chapter_id, version, ops: ContentOp[], word_count, tail_open, actor: "agent" \| "user" }` | apply the ops if `version = local + 1`, else refetch; write the result into the chapter query. Every event write into a cache re-issues a fetch of that key already in flight, so an older response cannot undo it (spec/11 §4.2, D-174) |
 | `canon.changed` | `{ book_id, target_type, target_id, op, change_id }` (goal-node writes use `goal`, `plan`, `task`) | invalidate canon queries (the goal-node keys are in the canon family, so readiness refreshes with every canon write) and the memory snapshot |
 | `settings.changed` | `{ book_id, kind: "setting_doc" \| "characters" \| "research_topics", doc_kind?, revision? }` (setting materials; a change of `books.settings` emits `book.updated`) | invalidate the matching queries |
 | `proposal.changed` | `{ book_id, proposal_id, status }` | invalidate proposals and the overview |

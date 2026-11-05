@@ -579,7 +579,8 @@ Each flow lists what the author does, what the system does, and where it happens
   errors in a row pause the session instead, so the author can read them and give feedback.
 - After a server restart, sessions that were mid-request are *interrupted*: **Continue** re-sends
   the request. Held or awaiting sessions stay held with nothing lost.
-- If the chapter is locked by an agent, the editor says so and offers **Pause** or **Stop**.
+- If the chapter is locked by an agent, the line above the text says so, and the agent panel
+  offers **Pause** or **Stop**.
 
 ### F12 — Day-to-day overview
 - **Book overview** shows the next action (e.g. "Chapter 43 awaits your review", "Outline
@@ -713,7 +714,7 @@ and actions by status:
 | planned, no outline, no open session | **Write the outline** (opens the Outline dialog) | Write manually (focus the editor) |
 | planned, outline accepted, no open session | **Write the chapter** (opens the Write dialog) | **Redo the outline** · Write manually |
 | drafting, no open session | **Write the chapter** when it has an outline, otherwise **Write the outline** | Submit for review (manual drafts) · **Redo the outline** |
-| an open planner or writer session | — (the agent panel owns the session) | — |
+| an open planner or writer session | — (the agent panel owns the session) | Submit for review in drafting or revising: disabled while the session runs, otherwise it ends the session after a confirmation (D-174) |
 | in review | **Approve** · **Send back…** · **Ask the reviewer** | **Redo the outline** |
 | revising | — (session controls live in the agent panel) | Submit for review (when no session is running, e.g. after abandoning one) · **Redo the outline** |
 | official | — | Maintain / Retry maintenance (if canon is pending or failed) · Re-sync canon (if stale) · Copy text |
@@ -725,15 +726,22 @@ and actions by status:
 - Paragraphs show their pid in the gutter on hover. Clicking a paragraph edits it in place
   (auto-sizing textarea; Esc cancels; blur or ⌘⏎ saves). **Full-text edit** switches to one
   large textarea (paragraphs separated by blank lines). Saving aligns paragraphs and keeps pids.
-- Editing is disabled while the chapter's planner or writer session is *running*. The banner
-  says "The writer is working — Pause to edit".
+- Editing is disabled while the chapter's planner or writer session is *running*. The line above
+  the text, which shows the word count, then reads "🔒 The writer is working — pause to edit ·
+  2,350 words in this version". That line is one line high in every state, and nothing else above
+  the text appears or disappears with the session, so the text never moves when a step starts or
+  holds (D-174).
 - Live agent effects:
   - Inserted paragraphs fade and slide in (Motion, 180 ms). Updated paragraphs flash a subtle
     highlight. Deleted paragraphs collapse out.
   - Ghost text: while `insert_text` is being generated, its text streams in muted color with a
-    blinking caret, appended to the open paragraph or as a new paragraph.
+    blinking caret, appended to the open paragraph or as a new paragraph. When the model finishes,
+    the caret goes, and the sentence stays where it is until its replacement is on screen: the
+    landed text, or the held write (D-174).
   - Held write: the text the agent staged is shown merged into the draft and highlighted, as a
-    preview. Nothing is in the chapter until it is approved (D-141).
+    preview. Nothing is in the chapter until it is approved (D-141). Only the staged text changes
+    its look, from the ghost's grey to full ink on amber in 180 ms; the rest of the chapter never
+    changes color.
 - **Writer dock** (D-173), at the bottom of the pane while a writer session runs, holds or is
   paused:
   ```
@@ -1202,6 +1210,23 @@ The author can revise them later.
       staged write while giving feedback.
     - A blur from switching windows, or one on a needs-attention pause, never resumes.
     - Holds that the panel decides are not decided from the dock.
+38. **"A draft pane that does not flicker"** (D-174). The author writes by sentence with
+    auto-pause on and reported:
+    - "流式显示会在句子完成后消失，然后突然蹦出来一段带高亮的草稿，看起来观感很不好";
+    - after a first fix, "修了还是有闪烁";
+    - and "还有高度突变，其中一个高度突变是因为那个蓝色的写作中提示出现又消失".
+
+    Read as three rules for the whole cycle, from the first streamed character to the text after
+    approval:
+    - the sentence never leaves the screen;
+    - only the sentence changes its look;
+    - nothing above the text moves.
+
+    So:
+    - the streamed sentence stays until its replacement is on screen;
+    - only the staged text fades in;
+    - the lock notice moved into the word-count line;
+    - Submit is disabled rather than hidden while the writer runs.
 
 ## 11. Requirement traceability
 
@@ -1211,7 +1236,7 @@ The author can revise them later.
 | Knowledge accumulation | §6.2, F3 | `spec/07`, `spec/05` (researcher tools) |
 | Writing mode and granularity | §6.3, F4b | `spec/03` §Granularity, `spec/05` (drafting tools) |
 | Chapter outlining | §6.12, F4 | `spec/03` §5.2, `spec/05` (planner tools), `spec/08` §2 |
-| User participation | §6.4, F4, F4b, §8.5 | `spec/03` §5.2–§5.4 (holds), §6 (control operations), §7 (edit reports), `spec/11` §5.2 (writer dock, D-173) |
+| User participation | §6.4, F4, F4b, §8.5 | `spec/03` §5.2–§5.4 (holds), §6 (control operations), §7 (edit reports), §12 (previews), `spec/11` §4.2–§4.3 (event writes, pinned previews, D-174), §5.2 (writer dock, D-173; status row, reveal, D-174) |
 | Tiered memory | §6.5 | `spec/06-canon-memory.md` §Memory |
 | Entity graph | §6.6, F7 | `spec/06` §Entities, §Relations |
 | Timeline | §6.7, F7 | `spec/06` §Timeline (§1.4 tree and plan, D-170), `spec/05` §3, §6, `spec/10` §2.4 |

@@ -4276,3 +4276,77 @@ as before. The Demo provider now exercises the path spec/04 §7.2 describes, and
   - spec/03 §3, §5.1, §5.2, §5.4, §6, §14, §15 (#37);
   - spec/10 §2.7, §2.8;
   - spec/11 §5.2, §5.3, §9.
+
+### D-174 The draft pane keeps the streamed sentence on screen, and nothing above it moves
+
+- **Context**:
+  - The author writes by sentence with auto-pause on. They reported that the streamed sentence
+    vanished when it finished and a highlighted draft popped in:
+    "流式显示会在句子完成后消失，然后突然蹦出来一段带高亮的草稿".
+  - `08b0ee6` then:
+    - wrote `session.updated` / `session.tool_call` into the caches;
+    - pinned writer previews;
+    - kept an already-applied write `current`;
+    - added a fade.
+  - The author still saw flicker, and height jumps, one of them from the blue "writer is working"
+    banner ("修了还是有闪烁", "还有高度突变").
+  - Code facts (plan §2, code at `eca5a47`):
+    - **The fade.** The fade was on the merged view's wrapper, so the whole chapter turned grey
+      and back on every hold.
+    - **A stale response.** A snapshot GET started at `session.message` can read the database
+      before the hold commits (8 ms later in the author's session). TanStack stores a fetch's
+      result without comparing ages, so that response could overwrite the held state the events
+      had just written. The sentence then vanished, and the dock locked.
+    - **The blank render.**
+      - `session.updated(held)` cleared the pinned preview in Zustand, which renders
+        synchronously, while the cache writes reach React on `setTimeout(0)`. At least one render
+        showed neither the ghost nor the merged view.
+      - Without a cached snapshot, that blank lasted a whole GET.
+      - `chapter.content` cleared every preview of the session.
+    - **The panel's cards.** `session.tool_call` patched only the flat `tool_calls`, while the
+      activity stream renders `messages[].tool_calls`, so cards kept stale statuses.
+    - **The dock's flash.** On approval, between `tool_call(done)` and `updated(running)`, the
+      dock resolved a `done` call as a panel-owned hold.
+    - **The banner and Submit.** The lock banner (about 46 px) mounted only while running. Submit,
+      the only header action during a writer session, was hidden while running (32 px). Both
+      changed height twice per sentence, and Motion's `layout` then slid every paragraph.
+    - **No spec update.** `08b0ee6` changed no spec.
+- **Decision** (plan `docs/research/draft-pane-stability-plan.md`):
+  - **Reveal only the staged text.** `pending-new` marks the added paragraphs and the appended span.
+    A `from`-only keyframe goes from the ghost's ink and no tint to the element's own ink and tint
+    in 180 ms. Confirmed text never animates.
+  - **Event writes never lose to an older response.** Every event write goes through
+    `patchQuery`. When a fetch of that exact key is in flight, the helper cancels it and fetches
+    again; with data, the cancel reverts to the state just written. The cancel is explicit,
+    because TanStack reuses a running fetch when the query has no data yet. A tool call is also
+    written into its message's `tool_calls`.
+  - **A writer preview stays until its replacement is on screen.**
+    - `session.message` pins it to the draft version on screen.
+    - The pane renders it while that version holds, and the merged view replaces the list it is
+      in.
+    - The store drops it on its call's `done`/`error`, on a session status other than
+      running/held, and on a reconnect; never on `held` or `chapter.content`.
+    - The rule: remove a thing by a condition from the same store as its replacement.
+  - **A resolved call is not the held call**: `useWriterState.held` only while the call itself is
+    `held`.
+  - **The lock notice is in the status row**, the one-line word-count row. There is no banner.
+  - **Submit is disabled with a tooltip, not hidden, while the session runs.**
+  - **An empty chapter streams too.** `ChapterText` showed `EmptyState` whenever the draft had no
+    paragraphs, and the ghost lives in the other branch. So a new chapter's first sentence never
+    streamed. While a preview exists, the prose block with the ghost replaces the empty state.
+- **Consequences**:
+  - From the first streamed character to the approved text, the sentence stays in place. Only it
+    changes its look, and the header and the line above the text keep their height.
+  - Two regression tests guard this:
+    - a `MutationObserver` over one sentence's recorded events, in three cache variants;
+    - a layout check of running against held.
+  - At most one extra GET per event while a fetch is in flight, and it replaces a cancelled one.
+  - In a turn with two write calls only the first streams, as before; the second appears when it
+    lands (plan §8).
+  - New keys `chapter:locked_live_words` and `chapter:submit_running_hint`.
+    `chapter:locked_banner` stays for the full-text editor.
+- **Spec**:
+  - PROJECT F11, §8.5, §10 (#38), §11;
+  - spec/03 §12;
+  - spec/10 §3;
+  - spec/11 §4.2, §4.3, §5.2, §7, §9.

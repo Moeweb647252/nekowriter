@@ -124,18 +124,48 @@ message and a retry.
 - Dispatch table by event type (spec/10 §3): update stores, upsert into query caches with
   `queryClient.setQueryData` where the payload is complete (sessions, tool calls, chapter list
   items), and invalidate where it is a signal (canon, settings, knowledge).
-- `session.updated` invalidates the chapter that embeds the session as well as the session itself:
-  `keys.chapters.detail(session.chapter_id)` when the payload's `SessionDto` has a chapter, and no
-  chapter when it does not (conception, research, canon seed). `ChapterDto.open_sessions` is the
-  chapter pane's only handle on its writer session and the chapter query is the only place it comes
-  from, so without this an **agent**-driven hold (`auto_pause`, `pause_after_outline`) left the
-  cached session `running`, `useWriterState` never subscribed to the snapshot (it does so only for a
-  `held` session), and the dock plus the merged preview were missing until a reload — while the
-  agent panel, which resolves the hold from its own snapshot, correctly said to decide in the dock.
-  Author-driven changes already refreshed the chapter (`invalidateSession` in
-  `api/hooks/sessions.ts`); this is the same invalidation for the event path (D-144). The scope is
-  one chapter key: no blanket invalidation, so a research or conception event cannot refetch the
-  open chapter.
+- `session.updated` writes its `SessionDto` into the session snapshot
+  (`keys.sessions.detail(id)`, field `session`). When the session has a chapter, it also writes it
+  into that chapter's `open_sessions` (`keys.chapters.detail(session.chapter_id)`), and a terminal
+  status removes it from that list.
+  - A session with no chapter (conception, research, canon seed) touches no chapter.
+  - `ChapterDto.open_sessions` is the chapter pane's only handle on its writer session. Without
+    this write, an **agent**-driven hold (`auto_pause`, `pause_after_outline`) left the cached
+    session `running`, and the dock plus the merged preview were missing until a reload (D-144).
+  - Writing the payload rather than invalidating makes the hold visible in the same flush as its
+    events, with no round trip (D-174).
+- `session.tool_call` upserts its `ToolCallDto` into the snapshot's `tool_calls` and into the
+  `tool_calls` of the `messages` item whose `message.id` is the call's `message_id`. The activity
+  stream renders the latter (D-174).
+- `chapter.content` applies the ops to `chapterDoc` and writes the result into the chapter
+  query (content, `content_version`, `word_count`).
+- **Event writes never lose to an older response** (D-174). Every write above goes through one
+  helper, `patchQuery(key, update)`:
+  - It calls `setQueryData` when the key has data.
+  - When a fetch of that exact key is already in flight, it calls `cancelQueries({ queryKey: key,
+    exact: true })`, then `invalidateQueries({ queryKey: key, exact: true, refetchType: "all" })`.
+    With no cached data, it only invalidates.
+  - That fetch was requested before the event, and TanStack stores a fetch's result without
+    comparing ages, so it could land with the state before the event.
+    - The cancel reverts to the state just written, because a manual write moves TanStack's
+      revert point.
+    - The invalidation requests again, so any response that lands afterwards reflects the event.
+    - The cancel has to be explicit: `invalidateQueries` cancels an in-flight fetch only when the
+      query has data, and otherwise reuses it.
+- `session.message` invalidates the snapshot: the activity stream needs the persisted message,
+  and the event carries no tool calls. Under the rule above, a later event write re-issues that
+  fetch while it is still in flight.
+- Previews of a writer tool outlive the persisted message (§4.3, D-174):
+  - `session.message` pins them with the open draft's `version`, and drops every other preview
+    of that seq;
+  - `session.tool_call` with status `done` or `error` drops its own preview;
+  - `session.updated` with a status other than `running` or `held` drops the session's previews;
+  - neither `held` nor `chapter.content` drops one. The pane hides a pinned preview once its
+    replacement is on screen (§5.2).
+  - The rule behind it: a thing on screen is removed by a condition computed from the same store
+    as its replacement, or in the same render. Zustand reaches React synchronously, while TanStack
+    notifies on `setTimeout(0)` (`notifyManager`), so clearing from one store while the
+    replacement comes from the other leaves a render with neither.
 - `chapter.updated` also invalidates `keys.canon.goals(book_id)` and `keys.books.overview(book_id)`,
   because an approval can make a `chapter_at_least` condition true (spec/06 §11.3). No goal page
   ever needs a manual refresh.
@@ -144,12 +174,14 @@ message and a retry.
   context view has that query active, so a closed one costs nothing. A past request's query
   (`keys.sessions.context(id, seq)`) never changes and has `staleTime: Infinity` (D-171).
   - The key is `["sessions", "context", id, seq | "current"]`, deliberately **outside**
-    `keys.sessions.detail(id)`. Those handlers invalidate the detail prefix on every event, and
-    TanStack refetches an active invalidated query whatever its `staleTime`, so a key under it
-    would refetch past views and skip the coalescing.
+    `keys.sessions.detail(id)`. `session.message` invalidates the detail prefix, and TanStack
+    refetches an active invalidated query whatever its `staleTime`, so a key under it would
+    refetch past views and skip the coalescing.
 - Deltas and previews are coalesced with `requestAnimationFrame` before they reach the store.
+  `session.message` flushes the buffer before it pins, so a preview's last frame is not lost.
 - After a reconnect (`onopen` following an `onerror`), invalidate all active queries
-  (`queryClient.invalidateQueries()`) and reload the open chapter document.
+  (`queryClient.invalidateQueries()`), reload the open chapter document, and drop every preview
+  (events are not replayed, so a pinned one could never be resolved).
 - Connection state (`connecting | open | reconnecting`) is shown as a small dot in the top bar.
 
 ### 4.3 Zustand stores
@@ -158,9 +190,15 @@ message and a retry.
   `pinnedSessionManual: Record<bookId, boolean>` (D-167), `language`. Theme is owned by the
   scaffold's `ThemeProvider`.
 - `live.ts`: `streams: Record<sessionId, { seq, text: Record<index, string>, reasoning: Record<index,
-  string> }>`, `previews: Record<"sessionId:seq:callIndex", { name, field, text }>`. Actions
-  `applyDelta`, `applyPreview`, `clearSeq(sessionId, seq)` (called when `session.message` for that
-  seq arrives).
+  string> }>`, `previews: Record<"sessionId:seq:callIndex", { name, field, text, pinned?: { version
+  } }>`. Actions:
+  - `applyDelta` and `applyPreview`;
+  - `clearSeq(sessionId, seq, pinVersion?)`, called when `session.message` for that seq arrives.
+    It drops the stream. With `pinVersion`, it keeps the previews of `insert_text`,
+    `insert_paragraphs` and `rewrite_paragraph` as pinned to that draft version, and drops the
+    others (D-174);
+  - `clearPreview(sessionId, seq, callIndex)`, `clearSessionPreviews(sessionId)` and
+    `clearAllPreviews()`.
 - `chapterDoc.ts`: `{ chapterId, version, paragraphs: {pid, text}[], tailOpen, highlights:
   Record<pid, {kind: "inserted" | "updated", at}> }`. Actions `load(dto)` and
   `applyOps(version, ops, actor) → "applied" | "gap"`. A gap triggers a refetch of the chapter.
@@ -212,10 +250,33 @@ message and a retry.
   memoized on `(pid, text, highlight)`. The reading column uses `styles/prose.css`: `.prose-cjk`
   (`text-indent: 2em; margin: 0; line-height: 1.9`) or `.prose-latin` (`margin-bottom: .8em`),
   chosen by the book's writing language.
-- `GhostText`: reads `live.previews` for this chapter's running writer session. An
-  `insert_text` preview is muted text with a blinking caret, appended to the open tail paragraph
-  or as a new block; `insert_paragraphs` and `rewrite_paragraph` previews appear under their
-  target pid (spec/03 §12).
+- **The status row** above the paragraphs (D-174) holds the word count on the left and **Full-text
+  edit** on the right. It is the only thing above the text, and it is one line high in every
+  state, so the text never moves when the writer starts, holds or stops.
+  - While the writer runs (`locked`), the left side is a Lucide `Lock` (`text-status-running`)
+    and `chapter:locked_live_words`, with `role="status"`.
+  - While a merged view is up, it is `chapter:pending_live_words`; otherwise
+    `chapter:live_words`.
+  - The left side is `flex min-w-0 items-center gap-1`, and its text is a `truncate` span with
+    the full sentence in `title`.
+  - There is no lock banner: it mounted and unmounted twice per sentence and moved the text by its
+    height.
+- `GhostText` shows the preview `useWriterState` returns for this chapter's writer session (spec/03
+  §12).
+  - An `insert_text` preview is muted text (`color-mix(in oklch, currentColor 45%,
+    transparent)`) appended to the open tail paragraph, or a new block when the tail is closed.
+    `insert_paragraphs` and `rewrite_paragraph` previews are a block of their own.
+  - A live preview has a blinking caret. A **pinned** one (its message is persisted, §4.3) has
+    none and keeps its place.
+  - `useWriterState` returns, while the session is `running`, the newest-seq preview of the
+    session, live or pinned. While it is `held`, it returns only a pinned preview.
+  - A pinned preview is returned only while `chapterDoc.version` equals its pinned version (D-174).
+    When the write lands, the text and the ghost's removal come in one `chapterDoc` update. When a
+    held write's merged view comes up, it replaces the paragraph list the ghost belongs to. Either
+    way, no render shows neither.
+  - A draft with no paragraphs renders `EmptyState` only while there is no preview. With one, it
+    renders the prose block with only the ghost, so a new chapter's first sentence streams too
+    (D-174).
 - `HoldBar`: shown under the paragraphs touched by the held call (from `ToolCallDto.ui`). Buttons:
   Continue (⌘⏎), Feedback… (inline textarea → "Send & continue"). For `submit_outline` it renders
   on the Outline tab with "Approve outline" and "Request changes"; the outline and reference
@@ -225,12 +286,32 @@ message and a retry.
   complete `ChapterContent` on `ToolCallDto.pending_content` (`expected_version` = the
   `content_version` it read). The pane shows the draft the author is being asked for, and the dock
   under it takes the decision:
-  - `PendingText` renders the **merged** document — `pending_content.content` itself, with each
-    paragraph marked `confirmed` / `changed` / `added` against the draft on screen, the latter two
-    tinted with `--color-status-waiting` and a note saying the text is a preview. The merged view is
-    **not** editable (a click would save a paragraph the author cannot see, and the save would bump
-    the version the staged write is compared against), so `ParagraphEditor` and `FullTextEditor` are
-    closed while it is up.
+  - `PendingText` renders the **merged** document: `pending_content.content` itself, with each
+    paragraph marked `confirmed` / `changed` / `added` against the draft on screen.
+    - An `added` paragraph is tinted `bg-status-waiting/15`.
+    - A `changed` paragraph tints only its text from the first differing character on
+      (`bg-status-waiting/30`), so an append marks the appended part.
+    - The tint is the only marker; there is no note above the text.
+  - **The reveal** (D-174): the staged parts, i.e. each `added` paragraph and the appended span,
+    carry `pending-new`.
+    - `prose.css` animates `.pending-new` from the ghost's ink and no tint to the element's own ink
+      and tint, over 180 ms (`ease-out`, a `from` keyframe only, no fill mode, so the classes'
+      tints apply after it).
+    - Confirmed text and the wrapper never animate. An earlier version animated the wrapper's
+      `color`, which faded the whole chapter on every hold.
+    - Under `prefers-reduced-motion`, there is no animation.
+  - The merged view is **not** editable (a click would save a paragraph the author cannot see, and
+    the save would bump the version the staged write is compared against), so `ParagraphEditor`
+    and `FullTextEditor` are closed while it is up.
+  - `pendingStanding` also reads the draft's paragraphs. A draft whose version has moved but whose
+    paragraphs equal the staged content already holds the write, and stays `current`. This is the
+    moment after an approval, when `chapter.content` has landed but the call is not yet `done` in
+    the cache. Without the check, the dock would flash the superseded sentence.
+  - The held call the pane and the dock use (`useWriterState.held`) is the call
+    `held_tool_call_id` names, and only while that call's own status is `held` (D-174).
+    - Between an approval's `session.tool_call(done)` and its `session.updated(running)`, the dock
+      therefore shows its running state, not "decide in the agent panel".
+    - `findHeldCall` itself is shared with the panel and unchanged.
   - When `pending_content.expected_version` no longer equals the draft's `content_version`,
     `runner::apply_pending_content` **drops** the write (the author's edit wins). The pane then
     keeps the confirmed draft, the dock says the text will not be applied and names both versions,
@@ -325,6 +406,15 @@ message and a retry.
 - Header actions follow the table of PROJECT §8.5. An **open session** (planner or writer) hides
   every start action, because the agent panel owns the session; **Redo the outline** is offered
   on any non-official chapter with no open session, including `in_review` and `revising`.
+- **Submit for review** renders whenever the chapter is `drafting` or `revising` (D-174).
+  - It is disabled while a planner or writer session of the chapter runs, while a submit is
+    pending, or when the chapter is empty.
+  - While a session runs, a `Tooltip` on a wrapping `span` says `chapter:submit_running_hint` (a
+    disabled button gets no pointer events).
+  - It is never hidden for a running session: during a writer session it is the only action, and
+    hiding it changed the header's height on every step.
+  - The rule is spec/08 §1.1's: a running session blocks the submit, and an open non-running one
+    is ended after the confirmation.
 - `outlineState(chapter, calls)` (`features/chapter/outlineState.ts`) is the single derivation —
   `missing | in_progress | awaiting_approval | accepted` — shared by the header and the Outline
   tab, the `pendingDraftView` pattern of D-141 applied to the outline, so they cannot disagree.
@@ -776,7 +866,10 @@ mirrors spec/03 §4 step 1. The `model.effort_unsupported` creation warning show
 - **Motion** (`motion/react`): root `MotionConfig reducedMotion="user"`. Paragraph enter
   `{opacity: 0, y: 4} → {opacity: 1, y: 0}` 180 ms; exit height collapse 150 ms; highlight fade
   1.2 s; held ring pulse (2 s loop, subtle); list reorder via `layout`. No animation on large
-  re-renders (initial load).
+  re-renders (initial load). A held write's staged text fades from the ghost's ink and no tint to
+  full ink and its waiting tint in 180 ms (CSS, `.pending-new`, §5.2). Because paragraphs animate
+  their layout, nothing above them may change height with the session status (§5.2, the status
+  row; D-174).
 - **Keyboard** (`lib/hotkeys.ts`, a small custom hook; no library): ⌘/Ctrl+⏎, Alt+P, Esc,
   ⌘/Ctrl+K (PROJECT §8.13). Shortcuts are ignored while an IME composition is active
   (`event.isComposing`), which matters for Chinese input.
@@ -796,7 +889,7 @@ test imports the file by relative path).
 
 ## 9. Tests (Vitest)
 - `chapterDoc.applyOps`: insert at start, middle, and end; update; delete; tail; version gap.
-- `live` buffers: delta coalescing and clearing on message persistence.
+- `live` buffers: delta coalescing, clearing on message persistence, and pinning writer previews.
 - `wordcount` vectors.
 - `ToolCallCard` renderers: every tool name in the spec has a renderer and an i18n summary key.
 - Every value of the generated `ErrorCode` union, every session error code, and every warning
@@ -824,6 +917,23 @@ test imports the file by relative path).
     - placeholders and labels per state;
   - both locales have every `chapter:dock.*` key, and the removed `chapter:pending_*` keys are gone
     from both.
+- Draft pane stability (D-174, plan `docs/research/draft-pane-stability-plan.md` §5):
+  - events:
+    - a fetch in flight when an event write lands is re-issued, and its older response never
+      becomes visible (snapshot and chapter, and a first fetch with nothing cached);
+    - a tool call is updated inside `messages[].tool_calls`;
+    - the pinning and dropping rules of §4.2, including none on `held` or `chapter.content`, and
+      all on a reconnect;
+  - `useWriterState`: a pinned preview by version, no live preview while held, and no held call
+    once the named call is `done`;
+  - **the handoff never blanks**: `ChapterPage` driven by one sentence's recorded events, from the
+    first preview delta through approval. A `MutationObserver` asserts that the sentence is in the
+    draft column after every mutation. There are three variants: the snapshot cached, not cached,
+    and a stale GET landing after the hold. The dock never shows `panel_hold`. With auto-pause off,
+    the landed text replaces the ghost in one batch, so the sentence is never shown twice;
+  - only staged parts carry `pending-new`, and `prose.css` animates nothing else;
+  - layout: the elements before the first paragraph, and the header's actions, are the same while
+    running and while held; Submit is disabled with its hint while running.
 - Context view (D-171):
   - `lib/treemap.ts`:
     - areas proportional to the weights;

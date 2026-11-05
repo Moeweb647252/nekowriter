@@ -255,6 +255,19 @@ needed. Real providers are tested when the author supplies keys.
     - With auto-pause off, press **Pause** in the panel during a write: the write holds and the dock
       shows ✓; a note keeps the paragraphs. Edit the draft during such a hold and approve: the
       dock names both versions and continues without the staged text.
+21. Steady draft pane (M26, plan §6). Demo, a chapter with an accepted outline, granularity
+    **sentence**, auto-pause **on**:
+    - Watch five sentences. Each streams in grey with a caret, keeps its place without the caret
+      when it finishes, then settles to black on amber in place. The rest of the chapter never
+      changes color. Enter applies the sentence: the amber goes, and the text stays where it is.
+    - Throughout, the chapter header and the line above the text keep their height. The line reads
+      "The writer is working — pause to edit" while the writer runs. Submit stays in the header,
+      disabled while running. The text does not move when a step starts or holds.
+    - Pin the agent panel to another session (its session list) and watch three more sentences:
+      the same.
+    - Start a new chapter: its first sentence streams in place of the empty state.
+    - In the panel, each write's card shows **Done** after its approval, with no reload.
+    - With **Reduce motion** on in the OS, a held sentence appears with its tint and no fade.
 
 ## M12 — Outline and write sessions
 
@@ -456,3 +469,15 @@ M24. Execute in order, one commit per task.
 | 25.2 | **Server**: `0014_step_pause` and its guard; the entity, `SessionDto.pause_after_step` and `ToolCallDto.completes`; `PauseInput.after_step`; fresh pause flags in the hold decision and a guarded `pause_before_request`; `resume` on a running session with a pause pending (guarded clear, feedback to the inbox, re-read on a miss); `ResumeInput.keep_write`; bindings. | 02 §1, §2; 03 §3, §5.1, §5.2, §5.4, §6, §14; 10 §2.7, §2.8 | plan §5.1; spec/03 §15 #37; `entity_schema.rs` fresh and upgraded |
 | 25.3 | **Web**: `writerDock.ts` (the spec/11 §5.2 table, `ownPause`), `WriterDock.tsx`, `useDraftRegionFocus` and the content `mutationKey`, the Text tab column layout, the serial request queue, "Pausing after this step…" in `SessionControls`, removing `PendingWriteDock` and its unused keys; both locales. | 11 §5.2, §5.3, §9; PROJECT §6.4, §8.5, §8.13 | plan §5.2 Vitest; `i18n:check` |
 | 25.4 | **Smoke**: smoke item 20 with the Demo provider. | PLAN §M11.5 | the checklist passes |
+
+## M26 — Steady draft pane
+
+Plan: `docs/research/draft-pane-stability-plan.md` (D-174). It follows M25 and is web-only: no
+migration, endpoint, prompt or binding. 26.2 and 26.3 are independent; one commit per task.
+
+| # | Task | Spec | Tests / acceptance |
+|---|---|---|---|
+| 26.1 | **Docs**: done with the plan (D-174). Re-read the amended sections against the code; fix any fact that disagrees and note it in D-174. | plan §7 | `check.sh` green (docs only) |
+| 26.2 | **Events and previews**: `patchQuery` and its four users (chapter `open_sessions`, snapshot `session`, tool calls, `chapter.content`); the call upserted into `messages[].tool_calls`; the pinned version in `live.ts`; previews dropped on `done`/`error`, on a status other than running/held and on a reconnect, never on `held` or `chapter.content`; `useWriterState` rendering a pinned preview by version and returning only a `held` call. | 11 §4.2, §4.3, §5.2; 10 §3; 03 §12 | plan §5.1, §5.2 Vitest, including the `MutationObserver` handoff test |
+| 26.3 | **Reveal and layout**: `pending-new` in `PendingText` and `prose.css`; the status row replacing the lock banner; Submit disabled with its tooltip while the session runs; the ghost on an empty chapter; `chapter:locked_live_words` and `chapter:submit_running_hint` in both locales. | 11 §5.2, §7; PROJECT §8.5 | plan §5.3, §5.4 Vitest; `i18n:check` |
+| 26.4 | **Smoke**: smoke item 21 with the Demo provider; record what was seen in D-174. | PLAN §M11.5 | the checklist passes |

@@ -709,7 +709,7 @@ The author sees long tool arguments while they are generated.
 | Tool | Preview field | Rendered in |
 |---|---|---|
 | `insert_text` | `text` | chapter ghost text at the cursor |
-| `insert_paragraphs`, `rewrite_paragraph` | `text` | tool card (and a ghost under the target pid) |
+| `insert_paragraphs`, `rewrite_paragraph` | `text` | tool card, and a ghost block below the text (the preview carries no pid, so it cannot sit under its target) |
 | `submit_outline` | `outline` | Outline tab and tool card |
 | `submit_revision_plan` | `plan` | tool card |
 | `write_setting_doc` | `content` | conception document tab |
@@ -723,7 +723,10 @@ The author sees long tool arguments while they are generated.
 escapes (`\n \t \" \\ \/ \b \f \r \uXXXX` incl. surrogate pairs), and escape sequences split
 across chunks. Tests feed sample payloads split at every byte boundary. Preview events identify
 the in-flight call by `(session_id, seq of the assistant message being generated, call_index)`.
-The frontend discards a preview when the persisted tool call arrives.
+The frontend discards a preview when the persisted message arrives. The exception is a writer
+tool's preview (`insert_text`, `insert_paragraphs`, `rewrite_paragraph`). It is kept, without its
+caret, until the text that replaces it is on screen (the landed write, or a held write's merged
+view), or until its call ends without one (spec/11 §4.2, §4.3, D-174).
 
 ## 13. Usage accounting
 
