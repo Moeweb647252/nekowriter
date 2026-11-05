@@ -73,10 +73,10 @@
     "write_title": "智能体写的正文正在草稿里等你",
     "write_body": "这些段落在章节正文区显示。请在正文区下方的 dock 栏里应用或否决。",
     "write_open_draft": "打开正文",
-    "before": "Before",
-    "after": "After",
-    "field": "Field",
-    "shared_scope": "Shared with every book that sees this scope."
+    "before": "之前",
+    "after": "之后",
+    "field": "字段",
+    "shared_scope": "与所有能看到此范围的书共享。"
   },
   "writer": {
     "granularity": "写作粒度",
@@ -361,84 +361,84 @@
       "summary_create": "建议新建一个目标情节点"
     },
     "book_overview": {
-      "summary": "Book overview ({{count}} sections)"
+      "summary": "全书概览（{{count}} 个部分）"
     },
     "open_chapter": {
-      "summary": "Opened a chapter",
-      "summary_chapter": "Opened chapter {{chapter}}"
+      "summary": "打开了一章",
+      "summary_chapter": "打开了第 {{chapter}} 章"
     },
     "read_setting_doc": {
-      "summary": "Read a setting document",
-      "summary_doc": "Read the {{doc}} document"
+      "summary": "读取了一份设定文档",
+      "summary_doc": "读取了{{doc}}文档"
     },
     "read_characters": {
-      "summary": "Read the cast ({{count}})",
-      "summary_name": "Read {{name}}"
+      "summary": "读取了人物表（{{count}} 位）",
+      "summary_name": "读取了 {{name}}"
     },
     "list_goals": {
-      "summary": "Listed goals ({{count}})"
+      "summary": "列出了目标（{{count}} 个）"
     },
     "list_research": {
-      "summary": "Listed research tasks ({{count}})"
+      "summary": "列出了研究任务（{{count}} 个）"
     },
     "list_sessions": {
-      "summary": "Listed sessions ({{count}})"
+      "summary": "列出了会话（{{count}} 个）"
     },
     "create_chapter": {
-      "summary": "Created a chapter"
+      "summary": "创建了一章"
     },
     "edit_chapter": {
-      "summary": "Edited a chapter"
+      "summary": "编辑了一章"
     },
     "edit_chapter_text": {
-      "summary": "Edited chapter text"
+      "summary": "编辑了章节正文"
     },
     "delete_canon_record": {
-      "summary": "Deleted a canon record ({{type}})"
+      "summary": "删除了一条正典记录（{{type}}）"
     },
     "create_goal": {
-      "summary": "Created a goal"
+      "summary": "创建了一个目标"
     },
     "update_goal": {
-      "summary": "Updated a goal"
+      "summary": "更新了一个目标"
     },
     "create_research_task": {
-      "summary": "Created a research task"
+      "summary": "创建了一个研究任务"
     },
     "update_research_task": {
-      "summary": "Updated a research task"
+      "summary": "更新了一个研究任务"
     },
     "delete_research_task": {
-      "summary": "Deleted a research task"
+      "summary": "删除了一个研究任务"
     },
     "add_knowledge_entry": {
-      "summary": "Added a knowledge entry"
+      "summary": "添加了一条知识条目"
     },
     "start_session": {
-      "summary": "Started a session",
-      "summary_started": "Started session #{{id}}"
+      "summary": "启动了一个会话",
+      "summary_started": "启动了会话 #{{id}}"
     }
   },
   "book_agent": {
-    "mode": "Write mode",
-    "mode_review": "Review changes",
-    "mode_full": "Full access",
-    "mode_review_hint": "Each change waits for your approval.",
-    "mode_full_hint": "Changes apply at once. Canon, settings and goals can be reverted; chapter text from History; research tasks and knowledge entries cannot be reverted.",
-    "start": "Start conversation",
-    "start_title": "Book agent",
-    "start_hint": "Ask about the whole book. Read before changing.",
-    "message_label": "First message",
-    "message_placeholder": "Ask the book agent…",
-    "start_failed": "Could not start the conversation.",
-    "begin": "Start conversation",
-    "end": "End conversation",
-    "new_conversation": "New conversation",
-    "end_title": "End this conversation?",
-    "end_body": "The conversation closes. Its messages stay in the history.",
-    "end_held_body": "The held change will not be applied. The conversation closes and its messages stay in the history.",
-    "end_confirm": "End conversation",
-    "conceiving_disabled": "设定完成后即可开始书籍助手对话。"
+    "mode": "写作模式",
+    "mode_review": "审阅改动",
+    "mode_full": "完全访问",
+    "mode_review_hint": "每项改动都会等待你的批准。",
+    "mode_full_hint": "改动立即生效。正典、设定与目标可以撤回；章节正文可在历史中撤回；研究任务与知识条目不可撤回。",
+    "start": "开始对话",
+    "start_title": "书籍助手",
+    "start_hint": "可以询问整本书的内容。改动前请先阅读。",
+    "message_label": "第一条消息",
+    "message_placeholder": "向书籍助手提问…",
+    "start_failed": "无法开始对话。",
+    "begin": "开始对话",
+    "end": "结束对话",
+    "new_conversation": "新对话",
+    "end_title": "结束这个对话？",
+    "end_body": "对话将关闭，消息仍保留在历史中。",
+    "end_held_body": "待批准的改动不会生效。对话将关闭，消息仍保留在历史中。",
+    "end_confirm": "结束对话",
+    "conceiving_disabled": "构思定稿后才能开始对话。"
   },
   "context": {
     "title": "上下文",
@@ -473,7 +473,7 @@
     },
     "list": {
       "name": "名称",
-      "tokens": "≈ Tokens",
+      "tokens": "≈ Token",
       "share": "占比",
       "more": "另有 {{count}} 项"
     },
@@ -519,7 +519,7 @@
     },
     "tooltip": {
       "share": "{{share}}%",
-      "tokens": "≈ {{tokens}} tokens"
+      "tokens": "≈ {{tokens}} Token"
     }
   }
 }

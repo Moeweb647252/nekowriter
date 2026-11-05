@@ -331,5 +331,5 @@
   "change_target.task": "情节点",
   "model_global_setting": "全局设置（{{level}}）",
   "model_global_setting_provider_default": "全局设置（提供商默认）",
-  "book_agent": "Book agent"
+  "book_agent": "书籍助手"
 }

@@ -419,3 +419,54 @@ describe("i18n namespaces", () => {
     }
   })
 })
+
+/** Chinese copy that is still the English original.
+ *
+ * `check-i18n` compares key sets, not values, so a key added to both files with the English text
+ * passes it. This guard is what catches that: every zh-CN leaf must contain CJK unless it is a
+ * brand, a code token, or nothing but interpolation placeholders. */
+const INTENTIONAL_IDENTICAL: ReadonlySet<string> = new Set([
+  "NekoWriter",
+  "English",
+  "Anthropic",
+  "DeepSeek",
+  "Markdown",
+  "max_tokens",
+  "max_completion_tokens",
+  "sk-…",
+  "tvly-…",
+])
+
+function localeLeaves(value: unknown, prefix: string, out: [string, string][]): void {
+  if (typeof value === "string") {
+    out.push([prefix, value])
+    return
+  }
+  if (value === null || typeof value !== "object") return
+  for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
+    localeLeaves(child, prefix === "" ? key : `${prefix}.${key}`, out)
+  }
+}
+
+describe("zh-CN translation completeness", () => {
+  it("does not leave the English copy in the Chinese locale", () => {
+    const offenders: string[] = []
+    for (const namespace of NAMESPACES) {
+      const en: [string, string][] = []
+      const zh: [string, string][] = []
+      localeLeaves((resources.en as Record<string, unknown>)[namespace], "", en)
+      localeLeaves((resources["zh-CN"] as Record<string, unknown>)[namespace], "", zh)
+      const zhByKey = new Map(zh)
+      for (const [key, english] of en) {
+        const chinese = zhByKey.get(key)
+        if (chinese === undefined || chinese !== english) continue
+        if (/[\u4e00-\u9fff]/.test(english)) continue
+        if (INTENTIONAL_IDENTICAL.has(english)) continue
+        // A value made only of placeholders and punctuation carries no prose to translate.
+        if (english.replace(/\{\{[^}]*\}\}/g, "").replace(/[^\p{L}]/gu, "") === "") continue
+        offenders.push(`${namespace}:${key} = ${JSON.stringify(english)}`)
+      }
+    }
+    expect(offenders).toEqual([])
+  })
+})
