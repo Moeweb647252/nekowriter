@@ -37,6 +37,8 @@ pub struct Model {
     /// The researcher's soft entry budget frozen at creation (spec/05 §8, D-164).
     pub research_max_entries: i32,
     pub pause_requested: bool,
+    /// A pause that waits for the current step to finish (D-173).
+    pub pause_after_step: bool,
     pub held_tool_call_id: Option<i32>,
     pub base_content_version: Option<i32>,
     pub pending_comment: Option<String>,

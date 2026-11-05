@@ -49,6 +49,7 @@ function planner(status: SessionDto["status"] = "running"): SessionDto {
     auto_pause: false,
     pause_after_outline: true,
     pause_requested: false,
+    pause_after_step: false,
     held_tool_call_id: null,
     base_content_version: null,
     error: null,
@@ -234,6 +235,7 @@ function heldWriteCall(id: number, text: string): ToolCallDto {
     appendices: [],
     ui: { inserted: [], appended_to: "p1", tail_open: false, word_count: 1 },
     sealed: false,
+    completes: false,
     pending_content: {
       content: { paragraphs: [{ pid: "p1", text }], next_pid: 2, tail_open: false },
       expected_version: 0,
@@ -317,7 +319,7 @@ describe("ChapterPage session focus", () => {
     await user.click(screen.getByRole("button", { name: "Request changes" }))
     await user.type(screen.getByRole("textbox"), "B 的反馈")
     await user.click(screen.getByRole("button", { name: "Send and continue" }))
-    expect(server.resumes.at(-1)).toEqual({ sessionId: 12, feedback: "B 的反馈" })
+    expect(server.resumes.at(-1)).toEqual({ sessionId: 12, feedback: "B 的反馈", keep_write: false })
   })
 
   it("drops an in-progress paragraph editor when the chapter changes", async () => {

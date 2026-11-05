@@ -36,7 +36,8 @@ function writer(): SessionDto {
     research_task_id: null, chapter_number: 1, research_topic: null, research_task_kind: null,
     model_label: "Demo", status: "running", phase: "drafting", granularity: "paragraph",
     context_window: 100000,
-    auto_pause: false, pause_after_outline: false, pause_requested: false, held_tool_call_id: null,
+    auto_pause: false, pause_after_outline: false, pause_requested: false,
+    pause_after_step: false, held_tool_call_id: null,
     base_content_version: 0, error: null, usage: {}, counters: {}, warnings: [],
     created_at: "2026-01-01T00:00:00Z", updated_at: "2026-01-01T00:00:00Z", finished_at: null,
   } as unknown as SessionDto

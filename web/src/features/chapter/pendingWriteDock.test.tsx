@@ -49,6 +49,7 @@ function writeCall(overrides: Partial<ToolCallDto> = {}): ToolCallDto {
     appendices: [],
     ui: { inserted: [], appended_to: "p2", tail_open: false, word_count: 8 },
     sealed: false,
+    completes: false,
     pending_content: { content: content([["p3", "雨点敲在船篷上。"]]), expected_version: 4 },
     created_at: "2026-01-01T00:00:00Z",
     finished_at: null,

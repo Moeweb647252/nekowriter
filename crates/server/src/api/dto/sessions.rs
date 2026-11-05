@@ -45,6 +45,8 @@ pub struct SessionDto {
     /// The book agent's write mode; `None` for every other session kind (D-169).
     pub write_mode: Option<WriteMode>,
     pub pause_requested: bool,
+    /// A pause requested for after the current step (D-173).
+    pub pause_after_step: bool,
     pub held_tool_call_id: Option<i32>,
     pub base_content_version: Option<i32>,
     pub error: Option<SessionError>,
@@ -126,6 +128,8 @@ pub struct ToolCallDto {
     /// The staged outline of a held outline session's `submit_outline` (spec/03 §5.2, D-146).
     /// Present only while the call is deferred; approval writes exactly this proposal.
     pub pending_outline: Option<PendingOutline>,
+    /// True while a deferred call would complete the session if approved (D-173).
+    pub completes: bool,
     pub created_at: DateTime<Utc>,
     pub finished_at: Option<DateTime<Utc>>,
 }
@@ -182,6 +186,18 @@ pub struct SessionSnapshotDto {
 pub struct ResumeInput {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub feedback: Option<String>,
+    /// Keep a staged content write while giving feedback (D-173).
+    #[serde(default)]
+    pub keep_write: bool,
+}
+
+/// `POST /api/sessions/:id/pause` body (spec/03 §6, D-173). An absent body is a hold pause.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, TS)]
+#[ts(export)]
+pub struct PauseInput {
+    /// Wait for the current step to finish and pause before the next model request.
+    #[serde(default)]
+    pub after_step: bool,
 }
 
 /// `POST /api/sessions/:id/message` body (spec/03 §6).

@@ -3,4 +3,8 @@
 /**
  * `POST /api/sessions/:id/resume` body (spec/03 §6).
  */
-export type ResumeInput = { feedback?: string | null, };
+export type ResumeInput = { feedback?: string | null,
+/**
+ * Keep a staged content write while giving feedback (D-173).
+ */
+keep_write: boolean, };

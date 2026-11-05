@@ -146,7 +146,10 @@ export function useResumeSession(bookId: number) {
   const queryClient = useQueryClient()
   return useMutation({
     mutationFn: ({ sessionId, feedback }: { sessionId: number; feedback?: string }) => {
-      const input: ResumeInput = feedback === undefined || feedback === "" ? {} : { feedback }
+      const input: ResumeInput =
+        feedback === undefined || feedback === ""
+          ? { keep_write: false }
+          : { feedback, keep_write: false }
       return endpoints.resumeSession(sessionId, input)
     },
     onSuccess: (session) => {

@@ -167,6 +167,46 @@ pub async fn transition(
     to: SessionStatus,
     cause: TransitionCause,
 ) -> Result<Vec<ServerEvent>, AppError> {
+    let (done, events) = transition_inner(conn, session, to, cause, false).await?;
+    if !done {
+        return Err(AppError::new(
+            ErrorCode::SessionInvalidState,
+            format!(
+                "session {} is no longer {}",
+                session.id,
+                session.status.as_str()
+            ),
+        )
+        .with_details(serde_json::json!({
+            "status": session.status.as_str(),
+            "operation": "update",
+        })));
+    }
+    Ok(events)
+}
+
+/// Like [`transition`], but additionally requires `pause_requested = 1` in the status update.
+///
+/// The runner uses this for the pause-before-request boundary: a concurrent resume can clear the
+/// pause between the loop's read and this transaction. `None` means the guarded update missed and
+/// the caller must continue the loop instead of pausing (D-173 W12).
+pub async fn transition_if_pause_requested(
+    conn: &impl ConnectionTrait,
+    session: &agent_sessions::Model,
+    to: SessionStatus,
+    cause: TransitionCause,
+) -> Result<Option<Vec<ServerEvent>>, AppError> {
+    let (done, events) = transition_inner(conn, session, to, cause, true).await?;
+    Ok(done.then_some(events))
+}
+
+async fn transition_inner(
+    conn: &impl ConnectionTrait,
+    session: &agent_sessions::Model,
+    to: SessionStatus,
+    cause: TransitionCause,
+    pause_guard: bool,
+) -> Result<(bool, Vec<ServerEvent>), AppError> {
     let now = Utc::now();
     let from_running = is_running(session);
     // The oldest unreported snapshot wins: keep the stored one when there is one.
@@ -188,7 +228,13 @@ pub async fn transition(
         None
     };
     let changes = transition_changes(to, now, from_running, snapshot);
-    guard_update(conn, session.id, session.status, changes).await?;
+    let mut query = guard_update_query(session.id, session.status, changes);
+    if pause_guard {
+        query = query.filter(agent_sessions::COLUMN.pause_requested.eq(true));
+    }
+    if query.exec(conn).await?.rows_affected == 0 {
+        return Ok((false, Vec::new()));
+    }
     tracing::debug!(
         session_id = session.id,
         from = %session.status,
@@ -248,7 +294,7 @@ pub async fn transition(
             crate::services::research::on_session_status(conn, task_id, session.id, to).await?,
         );
     }
-    Ok(events)
+    Ok((true, events))
 }
 
 /// The partial session update of [`transition`]. Shared with the SQL-equality test so an extra
@@ -274,6 +320,7 @@ pub(crate) fn transition_changes(
     }
     if from_running {
         changes.pause_requested = sea_orm::Set(false);
+        changes.pause_after_step = sea_orm::Set(false);
         if let Some(snapshot) = view_snapshot {
             changes.view_snapshot = sea_orm::Set(Some(json::JsonText(snapshot)));
         }
@@ -504,6 +551,7 @@ pub async fn to_dto(
         pause_after_outline: row.pause_after_outline,
         write_mode: row.write_mode,
         pause_requested: row.pause_requested,
+        pause_after_step: row.pause_after_step,
         held_tool_call_id: row.held_tool_call_id,
         base_content_version: row.base_content_version,
         error: error_of(row),
@@ -610,6 +658,11 @@ pub fn message_dto(row: &agent_messages::Model) -> Result<MessageDto, AppError> 
 /// The tool-call DTO of a row (spec/10 §2.8). `result_text` is `raw_result_text` before sealing
 /// and the composed text after it (spec/03 §1.3).
 pub fn tool_call_dto(row: &agent_tool_calls::Model) -> Result<ToolCallDto, AppError> {
+    let effects: crate::db::json::ToolEffects = row
+        .effects
+        .clone()
+        .map(|value| value.into_inner())
+        .unwrap_or_default();
     let input_text = if row.input.chars().count() > INPUT_TEXT_DISPLAY_LIMIT {
         row.input
             .chars()
@@ -637,18 +690,9 @@ pub fn tool_call_dto(row: &agent_tool_calls::Model) -> Result<ToolCallDto, AppEr
         sealed: row.sealed,
         // A deferred call stores its staged write in `effects`; a finalized call has already applied
         // and cleared it, so this is `None` exactly when the text is in the chapter (D-139).
-        pending_content: row
-            .effects
-            .clone()
-            .map(|value| value.into_inner())
-            .unwrap_or_default()
-            .pending_content,
-        pending_outline: row
-            .effects
-            .clone()
-            .map(|value| value.into_inner())
-            .unwrap_or_default()
-            .pending_outline,
+        pending_content: effects.pending_content,
+        pending_outline: effects.pending_outline,
+        completes: effects.complete.is_some(),
         created_at: row.created_at,
         finished_at: row.finished_at,
     })
@@ -754,7 +798,7 @@ mod tests {
         );
         assert_eq!(
             canonical(&sql),
-            "UPDATE agent_sessions SET status = ?, pause_requested = FALSE, view_snapshot = ?, updated_at = ?, finished_at = ? WHERE id = ? AND status = ?"
+            "UPDATE agent_sessions SET status = ?, pause_requested = FALSE, pause_after_step = FALSE, view_snapshot = ?, updated_at = ?, finished_at = ? WHERE id = ? AND status = ?"
         );
     }
 

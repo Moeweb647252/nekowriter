@@ -53,6 +53,7 @@ function writeCall(
     appendices: [],
     ui: { pid: "p3", chars: 8 },
     sealed: false,
+    completes: false,
     pending_content: { content: staged, expected_version: expectedVersion },
     created_at: "2026-01-01T00:00:00Z",
     finished_at: null,

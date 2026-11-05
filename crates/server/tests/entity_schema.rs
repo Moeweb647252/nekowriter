@@ -1104,6 +1104,8 @@ fn boolean_fields_are_typed() {
         |model| &model.pause_after_outline;
     let _: fn(&nekowriter::db::entities::agent_sessions::Model) -> &bool =
         |model| &model.pause_requested;
+    let _: fn(&nekowriter::db::entities::agent_sessions::Model) -> &bool =
+        |model| &model.pause_after_step;
     let _: fn(&nekowriter::db::entities::agent_tool_calls::Model) -> &bool =
         |model| &model.is_error;
     let _: fn(&nekowriter::db::entities::agent_tool_calls::Model) -> &bool = |model| &model.sealed;

@@ -82,6 +82,7 @@ function session(overrides: Partial<SessionDto> = {}): SessionDto {
     auto_pause: false,
     pause_after_outline: false,
     pause_requested: false,
+    pause_after_step: false,
     held_tool_call_id: null,
     base_content_version: null,
     error: null,
@@ -231,6 +232,7 @@ describe("ActivityStream stick-to-bottom", () => {
       appendices: [],
       ui: null,
       sealed: false,
+      completes: false,
       created_at: "2026-01-01T00:00:00Z",
       finished_at: null,
     }

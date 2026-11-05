@@ -175,7 +175,7 @@ impl Runtime {
             .conn()
             .query_one_raw(Statement::from_sql_and_values(
                 DatabaseBackend::Sqlite,
-                "SELECT status, phase, pause_requested, held_tool_call_id, counters, usage, error, \
+                "SELECT status, phase, pause_requested, pause_after_step, held_tool_call_id, counters, usage, error, \
                  view_snapshot, granularity, auto_pause, pause_after_outline, finished_at \
                  FROM agent_sessions WHERE id = ?",
                 vec![session_id.into()],
@@ -187,6 +187,9 @@ impl Runtime {
             status: row.try_get::<String>("", "status").expect("status"),
             phase: row.try_get::<String>("", "phase").expect("phase"),
             pause_requested: row.try_get::<i64>("", "pause_requested").expect("pause"),
+            pause_after_step: row
+                .try_get::<i64>("", "pause_after_step")
+                .expect("step pause"),
             held_tool_call_id: row
                 .try_get::<Option<i32>>("", "held_tool_call_id")
                 .expect("held"),
@@ -487,6 +490,7 @@ pub struct SessionRow {
     pub status: String,
     pub phase: String,
     pub pause_requested: i64,
+    pub pause_after_step: i64,
     pub held_tool_call_id: Option<i32>,
     pub counters: String,
     pub usage: String,

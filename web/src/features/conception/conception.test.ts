@@ -240,6 +240,7 @@ function call(overrides: Partial<ToolCallDto>): ToolCallDto {
     appendices: [],
     ui: questionsUi,
     sealed: false,
+    completes: false,
     created_at: "2026-01-01T00:00:00Z",
     finished_at: null,
     ...overrides,

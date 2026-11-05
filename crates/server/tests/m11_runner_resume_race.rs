@@ -48,7 +48,10 @@ async fn resume_cannot_leave_a_running_session_without_a_runner() {
             nekowriter::services::sessions::resume(
                 &state,
                 session_id,
-                ResumeInput { feedback: None },
+                ResumeInput {
+                    feedback: None,
+                    keep_write: false,
+                },
             )
             .await
         }

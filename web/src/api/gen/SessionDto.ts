@@ -14,32 +14,36 @@ import type { WriteMode } from "./WriteMode";
 /**
  * One session row (spec/10 §2.8).
  */
-export type SessionDto = { id: number, book_id?: number | null, role: AgentRole, kind: SessionKind, chapter_id?: number | null, track_id?: number | null, research_task_id?: number | null, 
+export type SessionDto = { id: number, book_id?: number | null, role: AgentRole, kind: SessionKind, chapter_id?: number | null, track_id?: number | null, research_task_id?: number | null,
 /**
  * The chapter's number in its track, for the UI-composed title (D-054).
  */
-chapter_number?: number | null, research_topic?: string | null, 
+chapter_number?: number | null, research_topic?: string | null,
 /**
  * The task kind when the session belongs to a research task (spec/10 §2.8, D-158).
  */
-research_task_kind?: ResearchTaskKind | null, model_label: string, 
+research_task_kind?: ResearchTaskKind | null, model_label: string,
 /**
  * The frozen context window, for the Context view's share label (M23).
  */
-context_window: number, 
+context_window: number,
 /**
  * The frozen thinking effort from `model_snapshot` (spec/04 §5.1, D-162): the value in the
  * protocol's wire field, or `None` when the model takes no effort parameter.
  */
-effort?: string | null, status: SessionStatus, phase: Phase, granularity?: Granularity | null, auto_pause: boolean, pause_after_outline: boolean, 
+effort?: string | null, status: SessionStatus, phase: Phase, granularity?: Granularity | null, auto_pause: boolean, pause_after_outline: boolean,
 /**
  * The book agent's write mode; `None` for every other session kind (D-169).
  */
-write_mode?: WriteMode | null, pause_requested: boolean, held_tool_call_id?: number | null, base_content_version?: number | null, error?: SessionError | null, usage: Usage, counters: SessionCounters, parent_session_id?: number | null, 
+write_mode?: WriteMode | null, pause_requested: boolean,
+/**
+ * A pause requested for after the current step (D-173).
+ */
+pause_after_step: boolean, held_tool_call_id?: number | null, base_content_version?: number | null, error?: SessionError | null, usage: Usage, counters: SessionCounters, parent_session_id?: number | null,
 /**
  * `parent_session_id` of the child session, when this one was superseded by a rollover.
  */
-child_session_id?: number | null, 
+child_session_id?: number | null,
 /**
  * Present while the provider is being retried (spec/04 §6).
  */

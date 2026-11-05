@@ -254,6 +254,7 @@ async fn pre_0012_rows_survive_with_write_mode_null() {
         "updated_at",
         "finished_at",
         "canon_systems",
+        "pause_after_step",
     ];
     assert_eq!(
         columns(db.conn(), "agent_sessions").await,
@@ -336,7 +337,7 @@ async fn fresh_and_upgraded_databases_have_the_same_schema() {
 
     let old_columns = columns(old.conn(), "agent_sessions").await;
     assert_eq!(old_columns, columns(fresh.conn(), "agent_sessions").await);
-    assert_eq!(old_columns.len(), 33, "one explicit column per table field");
+    assert_eq!(old_columns.len(), 34, "one explicit column per table field");
     assert!(old_columns.contains(&"write_mode".to_owned()));
     let old_indexes: Vec<String> = old
         .conn()

@@ -47,6 +47,7 @@ vi.mock("@/api/hooks/sessions", () => ({
         auto_pause: false,
         pause_after_outline: true,
         pause_requested: false,
+    pause_after_step: false,
         held_tool_call_id: null,
         base_content_version: 1,
         error: null,

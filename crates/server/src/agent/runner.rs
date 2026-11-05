@@ -157,15 +157,28 @@ pub async fn drive(ctx: RunnerCtx) -> Result<(), AppError> {
         match classify_tail(ctx.state.db().conn(), ctx.session_id).await? {
             Tail::NeedsModel => {
                 if session.pause_requested {
-                    let events = transition_in_write(
-                        &ctx.state,
-                        ctx.session_id,
-                        SessionStatus::Paused,
-                        TransitionCause::PauseBeforeRequest,
-                    )
+                    // The guarded transition makes a resume that clears the pause between the
+                    // loop's read and this write win: a miss means the pause was cancelled, so
+                    // the loop continues instead of pausing (D-173 W12).
+                    let paused = crate::services::write(ctx.state.db(), {
+                        let session = session.clone();
+                        move |tx| {
+                            Box::pin(async move {
+                                crate::agent::session::transition_if_pause_requested(
+                                    tx,
+                                    &session,
+                                    SessionStatus::Paused,
+                                    TransitionCause::PauseBeforeRequest,
+                                )
+                                .await
+                            })
+                        }
+                    })
                     .await?;
-                    ctx.state.events().publish_all(events);
-                    return Ok(());
+                    if let Some(events) = paused {
+                        ctx.state.events().publish_all(events);
+                        return Ok(());
+                    }
                 }
                 if rollover_needed(&session) {
                     return super::context::rollover(&ctx.state, &session).await;
@@ -1631,7 +1644,11 @@ async fn finalize_inner(
     // The field is public API for later milestones (M4 appends its reference notes notice).
     let _ = &prompts;
 
-    let hold = hold_condition(session, call, outcome);
+    // Read the pause flags fresh inside the step's transaction: `session` was loaded at the loop
+    // top, and a pause/resume may have committed while the model request or tool prepare ran
+    // (D-173 W12, spec/03 §14).
+    let fresh_session = session::load(tx, session.id).await?;
+    let hold = hold_condition(&fresh_session, call, outcome);
     let await_input = outcome.await_input;
     let deferred = hold || await_input.is_some();
 
@@ -2010,7 +2027,12 @@ fn hold_condition(
         return true;
     }
     if session.pause_requested {
-        return true;
+        if !session.pause_after_step {
+            return true;
+        }
+        if outcome.effects.complete.is_some() {
+            return true;
+        }
     }
     if session.auto_pause && super::tools::registry::is_write_tool(&call.name) && !outcome.is_error
     {
