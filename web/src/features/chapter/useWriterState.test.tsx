@@ -53,6 +53,24 @@ describe("useWriterState previews and holds", () => {
     expect(result.current.held).toBeUndefined()
   })
 
+  it("returns a pinned preview while the session is held", () => {
+    snapshot = { tool_calls: [], messages: [] }
+    useChapterDoc.setState({ version: 2 })
+    useLiveStore.setState({
+      previews: {
+        "11:3:0": {
+          name: "insert_text",
+          field: "text",
+          text: "held pinned",
+          pinned: { version: 2 },
+        },
+      },
+    })
+    const chapter = { id: 7, open_sessions: [writer] } as unknown as ChapterDto
+    const { result } = renderHook(() => useWriterState(chapter, undefined))
+    expect(result.current.preview?.text).toBe("held pinned")
+  })
+
   it("returns a pinned preview only while its draft version is current", () => {
     snapshot = { tool_calls: [], messages: [] }
     useChapterDoc.setState({ version: 2 })
