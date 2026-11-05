@@ -154,7 +154,6 @@ describe("BookLayout height chain", () => {
   it("keeps page scrolling on every other workspace route", () => {
     for (const pathname of [
       "/books/1",
-      "/books/1/chapters/2",
       "/books/1/canon/entities",
       "/books/1/settings/outline",
     ]) {
@@ -165,7 +164,7 @@ describe("BookLayout height chain", () => {
       // `min-h-full` lets the content grow past the panel, which is what page scrolling needs.
       expect(frame.classList.contains("min-h-full"), pathname).toBe(true)
       expect(frame.classList.contains("h-full"), pathname).toBe(false)
-      expect(frame.classList.contains("flex"), pathname).toBe(true)
+      expect(frame.classList.contains("flex"), pathname).toBe(false)
       // No inline override, so react-resizable-panels' own `overflow: auto` stands.
       expect(scroller.style.overflow, pathname).toBe("auto")
 

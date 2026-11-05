@@ -49,6 +49,9 @@ export default function BookLayout() {
   // The conception studio is full width: the agent panel is collapsed by default there, because
   // the studio's own conversation pane is the agent panel (PROJECT §8.7, spec/11 §5.4).
   const isConception = isConceptionStudio(location.pathname)
+  // The chapter page owns its height: the header and tabs stay put and only the draft region
+  // scrolls, instead of the whole workspace panel scrolling (the author's report).
+  const isChapter = /^\/books\/[^/]+\/chapters\/[^/]+$/.test(location.pathname)
   const canonSystem = canonPageSystem(location.pathname)
 
   const { defaultLayout, onLayoutChanged } = useDefaultLayout({
@@ -164,9 +167,9 @@ export default function BookLayout() {
         >
           <div
             className={
-              isConception
+              isConception || isChapter
                 ? "flex h-full min-h-0 flex-col"
-                : "relative flex min-h-full flex-col"
+                : "relative min-h-full"
             }
           >
             {/*
