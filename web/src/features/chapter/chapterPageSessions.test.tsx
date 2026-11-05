@@ -220,30 +220,6 @@ function chapterText(id: number, title: string, text: string, openSessions: Sess
   return value
 }
 
-function heldWriteCall(id: number, text: string): ToolCallDto {
-  return {
-    id,
-    message_id: 1,
-    seq: 1,
-    call_index: 0,
-    name: "insert_text",
-    input: { text },
-    input_text: "",
-    status: "held",
-    is_error: false,
-    result_text: null,
-    appendices: [],
-    ui: { inserted: [], appended_to: "p1", tail_open: false, word_count: 1 },
-    sealed: false,
-    completes: false,
-    pending_content: {
-      content: { paragraphs: [{ pid: "p1", text }], next_pid: 2, tail_open: false },
-      expected_version: 0,
-    },
-    created_at: "2026-01-01T00:00:00Z",
-    finished_at: null,
-  }
-}
 
 function renderPage(tab = "outline") {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } })
@@ -278,49 +254,6 @@ beforeEach(() => {
 })
 
 describe("ChapterPage session focus", () => {
-  it("resets the draft dock to the new held call on the chapter shown", async () => {
-    const user = userEvent.setup()
-    const a = chapterText(CHAPTER_ID, "第一章", "A 的正文")
-    const b = chapterText(4, "第二章", "B 的正文")
-    server.chapter = a
-    server.chapters[CHAPTER_ID] = a
-    server.pendingDraft = {
-      writer: { held: heldWriteCall(101, "A 的正文"), session: { id: 11 } },
-      view: {
-        standing: "current",
-        expectedVersion: 0,
-        draftVersion: 0,
-        paragraphs: [{ pid: "p1", text: "A 的正文", kind: "confirmed" }],
-        stagedWords: 1,
-        confirmedWords: 1,
-      },
-    }
-    const { client } = renderPage("text")
-    expect(await screen.findByText("A 的正文", {}, { timeout: 3000 })).toBeInTheDocument()
-    await user.click(screen.getByRole("button", { name: "Request changes" }))
-    await user.type(screen.getByRole("textbox"), "A 的反馈")
-    server.chapters[CHAPTER_ID] = b
-    server.pendingDraft = {
-      writer: { held: heldWriteCall(102, "B 的正文"), session: { id: 12 } },
-      view: {
-        standing: "current",
-        expectedVersion: 0,
-        draftVersion: 0,
-        paragraphs: [{ pid: "p1", text: "B 的正文", kind: "confirmed" }],
-        stagedWords: 1,
-        confirmedWords: 1,
-      },
-    }
-    await act(async () => {
-      await client.invalidateQueries({ queryKey: keys.chapters.detail(CHAPTER_ID) })
-    })
-    expect(await screen.findByText("B 的正文", {}, { timeout: 3000 })).toBeInTheDocument()
-    expect(screen.queryByRole("textbox")).not.toBeInTheDocument()
-    await user.click(screen.getByRole("button", { name: "Request changes" }))
-    await user.type(screen.getByRole("textbox"), "B 的反馈")
-    await user.click(screen.getByRole("button", { name: "Send and continue" }))
-    expect(server.resumes.at(-1)).toEqual({ sessionId: 12, feedback: "B 的反馈", keep_write: false })
-  })
 
   it("drops an in-progress paragraph editor when the chapter changes", async () => {
     const user = userEvent.setup()

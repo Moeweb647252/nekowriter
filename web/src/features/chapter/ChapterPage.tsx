@@ -2,7 +2,7 @@
  * The chapter view (PROJECT §8.5, spec/11 §5.2).
  *
  * The Text tab is where the body is written, so it is also where a held chapter write is decided:
- * the dock under the reading column (`PendingWriteDock`) owns that decision, next to the merged text
+ * the dock under the reading column (`WriterDock`) owns that decision, next to the merged text
  * it would produce (D-141). The agent panel deliberately offers no second decision surface for the
  * same call — the author reported the split (「正文编写要在中间的正文草稿区进行，正文编辑时的意见
  * 提出在草稿区下方的 dock 栏里进行」).
@@ -18,15 +18,13 @@ import { useTranslation } from "react-i18next"
 
 import { useBook } from "@/api/hooks/books"
 import { useChapter, usePatchChapter } from "@/api/hooks/chapters"
-import { useResumeSession, useSession } from "@/api/hooks/sessions"
-import { useHeldDecision } from "@/features/agent/useHeldDecision"
+import { useSession } from "@/api/hooks/sessions"
 import { ChapterHeader } from "@/features/chapter/ChapterHeader"
 import { ChapterText } from "@/features/chapter/ChapterText"
 import { openOutlineSession, outlineState } from "@/features/chapter/outlineState"
 import { OutlineTab } from "@/features/chapter/OutlineTab"
-import { PendingWriteDock } from "@/features/chapter/PendingWriteDock"
 import { usePendingDraft } from "@/features/chapter/usePendingDraft"
-import { useErrorToast } from "@/components/common/ErrorToast"
+import { WriterDock } from "@/features/chapter/WriterDock"
 import { ReviewTab } from "@/features/chapter/ReviewTab"
 import { HistoryTab } from "@/features/chapter/HistoryTab"
 import { EmptyState } from "@/components/common/EmptyState"
@@ -54,8 +52,6 @@ export default function ChapterPage() {
   const patchChapter = usePatchChapter(chapterId, bookId)
   const load = useChapterDoc((state) => state.load)
   const reset = useChapterDoc((state) => state.reset)
-  const showError = useErrorToast()
-  const resume = useResumeSession(bookId)
   const shell = useBookShell()
   const focusStartedSession = (sessionId: number) => {
     // A newly started session must win over an older open one in the panel (R3-08).
@@ -97,12 +93,6 @@ export default function ChapterPage() {
   const outlineSession = openOutlineSession(chapter.data)
   const outlineSnapshot = useSession(outlineSession?.status === "held" ? outlineSession.id : null)
   const outlineStateValue = outlineState(chapter.data, outlineSnapshot.data?.tool_calls)
-  // Approve and request changes go through the shared payload builders (D-141), so the panel and
-  // this dock cannot send different things for the same contract.
-  const decision = useHeldDecision(pending.writer.session?.id ?? null, resume, showError)
-  // Only a held chapter write with staged content gets the dock. An outline hold belongs to the
-  // Outline tab, and a hold that stages nothing keeps the inline bar in `ChapterText`.
-  const dockView = pending.view
 
   if (chapter.isPending || book.isPending) {
     return <Skeleton className="m-6 h-64" />
@@ -156,7 +146,9 @@ export default function ChapterPage() {
             <TabsTrigger value="history">{t("chapter:tab_history")}</TabsTrigger>
           </TabsList>
         </div>
-        <TabsContent value="text" className="min-h-0 p-6">
+        <TabsContent value="text" className="flex min-h-0 flex-col p-0">
+          <div data-draft-region className="flex min-h-0 flex-1 flex-col">
+          <div className="min-h-0 flex-1 overflow-auto p-6">
           <ChapterText
             key={document.id}
             chapter={document}
@@ -167,23 +159,18 @@ export default function ChapterPage() {
             focusPid={tab === "text" ? focusPid : undefined}
             // The merged view is rendered only when the staged write would still apply; a
             // superseded one keeps the confirmed draft on screen (see `pendingWrite.ts`).
-            pendingView={dockView?.standing === "current" ? dockView : undefined}
+            pendingView={pending.view?.standing === "current" ? pending.view : undefined}
           />
-          {/*
-            The dock is the sticky element itself and a direct child of the tab panel, so its
-            containing block is the whole (tall) pane: a wrapper around it would be only as tall as
-            the dock and `position: sticky` could not pin it to the bottom of the viewport.
-          */}
-          {dockView === undefined || pending.writer.held === undefined ? null : (
-            <PendingWriteDock
-              key={pending.writer.held.id}
-              call={pending.writer.held}
-              view={dockView}
-              busy={decision.busy}
-              onApprove={decision.approve}
-              onRequestChanges={decision.requestChanges}
-            />
-          )}
+          </div>
+          <WriterDock
+            key={pending.writer.session?.id ?? "none"}
+            bookId={bookId}
+            chapterId={chapterId}
+            session={pending.writer.session}
+            held={pending.writer.held}
+            view={pending.view}
+          />
+          </div>
         </TabsContent>
         <TabsContent value="outline" className="min-h-0 p-6">
           <OutlineTab

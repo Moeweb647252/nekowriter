@@ -127,8 +127,15 @@ export function useOlderMessages(sessionId: number | null, initialCursor: string
 export function useSessionControl(bookId: number) {
   const queryClient = useQueryClient()
   return useMutation({
-    mutationFn: ({ sessionId, operation }: { sessionId: number; operation: "pause" | "resume" | "stop" | "continue" | "abandon" }) =>
-      endpoints.control(sessionId, operation),
+    mutationFn: ({
+      sessionId,
+      operation,
+      body = {},
+    }: {
+      sessionId: number
+      operation: "pause" | "resume" | "stop" | "continue" | "abandon"
+      body?: unknown
+    }) => endpoints.control(sessionId, operation, body),
     onSuccess: (session) => {
       queryClient.setQueryData(keys.sessions.detail(session.id), (previous: unknown) => {
         if (previous !== undefined && previous !== null && typeof previous === "object") {
@@ -145,11 +152,19 @@ export function useSessionControl(bookId: number) {
 export function useResumeSession(bookId: number) {
   const queryClient = useQueryClient()
   return useMutation({
-    mutationFn: ({ sessionId, feedback }: { sessionId: number; feedback?: string }) => {
+    mutationFn: ({
+      sessionId,
+      feedback,
+      keep_write = false,
+    }: {
+      sessionId: number
+      feedback?: string
+      keep_write?: boolean
+    }) => {
       const input: ResumeInput =
         feedback === undefined || feedback === ""
-          ? { keep_write: false }
-          : { feedback, keep_write: false }
+          ? { keep_write }
+          : { feedback, keep_write }
       return endpoints.resumeSession(sessionId, input)
     },
     onSuccess: (session) => {

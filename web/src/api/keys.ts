@@ -27,6 +27,8 @@ export const keys = {
   },
   chapters: {
     detail: (id: number) => ["chapters", "detail", id] as const,
+    /** Content writes, awaited by the writer dock before it resumes (D-173 W10). */
+    contentWrite: (id: number) => ["chapters", "content-write", id] as const,
     versions: (id: number) => ["chapters", id, "versions"] as const,
     version: (versionId: number) => ["chapters", "version", versionId] as const,
     reviews: (id: number) => ["chapters", id, "reviews"] as const,

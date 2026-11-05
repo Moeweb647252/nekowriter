@@ -3,7 +3,7 @@
  * D-141).
  *
  * Three places ask for the same thing — the agent panel's `HeldCallReview`, the draft pane's
- * `PendingWriteDock`, and the inline `HoldBar` — and all three must obey one contract: the feedback
+ * `WriterDock`, and the inline `HoldBar` — and all three must obey one contract: the feedback
  * is trimmed, the submit is disabled while nothing is left, and ⌘⏎/Ctrl+⏎ submits without ever
  * firing during an IME composition. The blank case is not cosmetic: the server filters blank
  * feedback to `None` and then **approves** the held call, so a whitespace-only "request changes"

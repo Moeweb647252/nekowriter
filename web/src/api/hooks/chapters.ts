@@ -142,10 +142,12 @@ export function useContentMutations(chapterId: number, bookId: number) {
   }
 
   const patch = useMutation({
+    mutationKey: keys.chapters.contentWrite(chapterId),
     mutationFn: (body: ChapterContentPatch) => endpoints.patchContent(chapterId, body),
     onSuccess: settle,
   })
   const putText = useMutation({
+    mutationKey: keys.chapters.contentWrite(chapterId),
     mutationFn: (body: ChapterContentTextPut) => endpoints.putContentText(chapterId, body),
     onSuccess: settle,
   })

@@ -2786,6 +2786,7 @@ async fn set_status(
     };
     if clear_pause {
         active.pause_requested = Set(false);
+        active.pause_after_step = Set(false);
     }
     // A status change that leaves `running` clears the pause flag and captures the snapshot, so
     // those operations must go through `transition`; these paths all enter `running`.

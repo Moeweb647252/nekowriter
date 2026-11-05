@@ -50,7 +50,8 @@
     "abandon_title": "放弃这个会话？",
     "abandon_body": "智能体会停止，未完成的工具调用会被关闭。已经写入的消息会保留在历史里，但会话将无法继续。",
     "abandon_confirm": "放弃会话",
-    "more": "更多"
+    "more": "更多",
+    "pausing_after_step": "本步结束后暂停…"
   },
   "feedback": {
     "title": "反馈",
