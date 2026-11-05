@@ -4174,3 +4174,19 @@ as before. The Demo provider now exercises the path spec/04 §7.2 describes, and
   - spec/04 §2;
   - spec/10 §2.7, §2.8;
   - spec/11 §2, §4.2, §5.3, §5.4, §7, §9.
+
+### D-172 The context view subdivides the kickoff the way the book sidebar does
+
+- **Context**: the M23 treemap could only name a kickoff block by its prompt key (`block.settings`,
+  `block.memory`), while the author's sidebar subdivides the book into 设定资料 (大纲, 世界观, 主角,
+  角色), 正典 (实体, 时间线, 记忆, 伏笔, 写作目标) and 正文. They asked for the same subdivisions in the
+  context composition, and answered "工具结果不细分" when asked whether tool results should split too.
+- **Decision**: only the kickoff is subdivided. `block.settings` becomes `block.settings.outline`,
+  `.characters`, `.world`, `.protagonist`; `block.memory` becomes `block.memory.recent`,
+  `.entities`, `.facts`, `.foreshadowing`. The sub-blocks replace their parents in every
+  `kickoff_blocks` list with the same cache breakpoint, and their concatenation must render byte for
+  byte like the parent it replaces. `results` keeps one part per tool.
+- **Consequences**: no migration and no API change — the existing `StoredBlock::Text.source` carries
+  the new key. `kickoff_baseline` changes shape (one block becomes four) and must be reviewed per
+  session kind. A prompt edit that changes one section's text still changes only that section's part
+  in the treemap.

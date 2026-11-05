@@ -417,3 +417,15 @@ and tools of M21 and M22. Execute in order, one commit per task.
 | 23.3 | **Breakdown and API**: `agent/breakdown.rs` (pure: rebuild, classification, appendices, replay rule, scale, caps, `rollover_at`), the loader (ordered pool reads, no transaction), `rollover_eligible`, `GET /sessions/:id/context`, the DTOs, `SessionDto.context_window`, bindings. | 03 §13.1; 10 §2.7, §2.8 | plan §5.2 `context_breakdown.rs`; spec/03 §15 #36 |
 | 23.4 | **Web**: `lib/treemap.ts` (squarified); `ContextButton`, `ContextDialog`, `RequestStrip`, `ContextTreemap`, the list view; the footer, studio and research-page entries; the origin tokens; `keys.sessions.context` and the SSE invalidation; both locales. | 11 §2, §4.2, §5.3, §5.4, §7, §9; PROJECT §6.19, §8.6 | plan §5.3 Vitest; `i18n:check` |
 | 23.5 | **Smoke**: smoke item 18 with the Demo provider. | PLAN §M11.5 | the checklist passes |
+
+## M24 — Context subdivisions
+
+Plan: `docs/research/context-subdivisions-plan.md` (D-172). It follows M23 and only subdivides the
+kickoff; tool results stay one part per tool.
+
+| # | Task | Spec | Tests / acceptance |
+|---|---|---|---|
+| 24.1 | **Docs**: done with the plan (D-172). | plan §3 | `check.sh` green (docs only) |
+| 24.2 | **Prompt pack and assembly**: the eight sub-block keys, `kickoff_blocks`, validator and samples. The concatenation of the sub-blocks equals today's parent rendering byte for byte. | 03 §10; 09 §2 | plan §2; `kickoff_baseline` diff per kind |
+| 24.3 | **Context labels**: `agent:context.block.*` for the eight keys, both locales; the treemap shows them. | 11 §5.3 | Vitest; `i18n:check` |
+| 24.4 | **Smoke**: smoke item 19 on a write session, compared with the sidebar. | PLAN §M11.5 | screenshots; D-172 consequences |
