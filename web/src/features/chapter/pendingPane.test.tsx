@@ -25,6 +25,10 @@ import type { ChapterDto } from "@/api/gen/ChapterDto"
 import type { ToolCallDto } from "@/api/gen/ToolCallDto"
 import type { PendingDraftView } from "@/features/chapter/pendingWrite"
 import { useChapterDoc } from "@/stores/chapterDoc"
+// @ts-expect-error -- Node test-only file read
+import { readFileSync } from "node:fs"
+
+const proseCss = readFileSync("src/styles/prose.css", "utf8")
 
 vi.mock("@/api/hooks/chapters", () => ({
   useContentMutations: () => ({
@@ -184,11 +188,14 @@ describe("PendingText", () => {
     expect(screen.getByText("第一段。")).not.toHaveClass("pending-new")
     expect(screen.getByText("智能体新写的一段。")).toHaveClass("pending-new")
     expect(container.querySelector('[data-kind="changed"] span')).toHaveClass("pending-new")
+    expect(container.querySelector('[data-kind="changed"]')).not.toHaveClass("pending-new")
   })
 
-  it("enters through the 180ms pending-text transition class", () => {
+  it("enters through the 180ms pending-text transition class without animating its wrapper", () => {
     const { container } = render(<PendingText paragraphs={VIEW.paragraphs} unspaced />)
     expect(container.firstElementChild).toHaveClass("pending-text")
+    expect(proseCss).not.toMatch(/\.pending-text\s*\{[^}]*animation:/)
+    expect(proseCss).toMatch(/\.pending-new\s*\{[^}]*animation: pending-reveal 180ms ease-out/)
   })
 
   it("does not offer the paragraph editor", () => {
