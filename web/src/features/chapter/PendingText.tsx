@@ -13,7 +13,7 @@
  * normal editable document once the decision is made. The waiting tint is the only marker; the
  * author asked for the explanatory note above the text to be removed.
  */
-import { cn } from "@/lib/utils"
+
 import type { PendingParagraph } from "@/features/chapter/pendingWrite"
 
 export type PendingTextProps = {
@@ -32,13 +32,18 @@ export function PendingText({ paragraphs, unspaced }: PendingTextProps) {
             data-pid={paragraph.pid}
             data-kind={paragraph.kind}
             title={paragraph.pid}
-            className={cn(
-              "rounded-sm",
-              paragraph.kind === "added" && "bg-status-waiting/15",
-              paragraph.kind === "changed" && "bg-status-waiting/10",
-            )}
+            className={paragraph.kind === "added" ? "rounded-sm bg-status-waiting/15" : "rounded-sm"}
           >
-            {paragraph.text}
+            {paragraph.kind === "changed" && paragraph.highlightFrom !== undefined ? (
+              <>
+                {paragraph.text.slice(0, paragraph.highlightFrom)}
+                <span className="bg-status-waiting/30">
+                  {paragraph.text.slice(paragraph.highlightFrom)}
+                </span>
+              </>
+            ) : (
+              paragraph.text
+            )}
           </p>
         ))}
       </div>

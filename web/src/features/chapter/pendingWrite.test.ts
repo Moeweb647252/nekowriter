@@ -112,7 +112,7 @@ describe("mergedPending", () => {
       ],
     })
     expect(merged).toEqual([
-      { pid: "p1", text: "改写后的第一段。", kind: "changed" },
+      { pid: "p1", text: "改写后的第一段。", kind: "changed", highlightFrom: 0 },
       { pid: "p2", text: "第二段。", kind: "confirmed" },
       { pid: "p3", text: "新加的一段。", kind: "added" },
     ])

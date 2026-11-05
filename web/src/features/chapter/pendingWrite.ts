@@ -43,6 +43,8 @@ export type PendingParagraph = {
   pid: string
   text: string
   kind: PendingParagraphKind
+  /** Character offset where the staged text starts diverging from the confirmed one (D-141). */
+  highlightFrom?: number
 }
 
 /** The draft the pane is showing: the store's paragraphs and their version. */
@@ -128,7 +130,12 @@ export function mergedPending(
       return { pid: paragraph.pid, text: paragraph.text, kind: "added" }
     }
     if (previous !== paragraph.text) {
-      return { pid: paragraph.pid, text: paragraph.text, kind: "changed" }
+      // A rewrite that only appends to an existing paragraph must tint the appended part, not the
+      // whole paragraph: the author asked for the highlight to start where the text diverges.
+      let shared = 0
+      const limit = Math.min(previous.length, paragraph.text.length)
+      while (shared < limit && previous[shared] === paragraph.text[shared]) shared += 1
+      return { pid: paragraph.pid, text: paragraph.text, kind: "changed", highlightFrom: shared }
     }
     return { pid: paragraph.pid, text: paragraph.text, kind: "confirmed" }
   })
