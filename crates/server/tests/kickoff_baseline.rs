@@ -488,8 +488,14 @@ async fn maintenance_and_book_agent_kickoffs_carry_their_sources() {
     assert_eq!(
         sources,
         vec![
-            Some("block.settings".to_owned()),
-            Some("block.memory".to_owned()),
+            Some("block.settings.outline".to_owned()),
+            Some("block.settings.characters".to_owned()),
+            Some("block.settings.world".to_owned()),
+            Some("block.settings.protagonist".to_owned()),
+            Some("block.memory.recent".to_owned()),
+            Some("block.memory.entities".to_owned()),
+            Some("block.memory.facts".to_owned()),
+            Some("block.memory.foreshadowing".to_owned()),
             Some("block.cast_index".to_owned()),
             Some("block.chapter_draft".to_owned()),
             Some("archivist.kickoff.maintenance".to_owned()),

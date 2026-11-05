@@ -319,7 +319,18 @@ async fn only_the_settings_block_of_a_rollover_kickoff_carries_a_cache_flag() {
         .collect();
     assert_eq!(
         flags,
-        vec![Some(true), None, None, None],
+        vec![
+            Some(true),
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            None
+        ],
         "only `block.settings` carries a cache flag: {flags:?}"
     );
     let sources: Vec<Option<String>> = messages[0]
@@ -333,8 +344,14 @@ async fn only_the_settings_block_of_a_rollover_kickoff_carries_a_cache_flag() {
     assert_eq!(
         sources,
         vec![
-            Some("block.settings".to_owned()),
-            Some("block.memory".to_owned()),
+            Some("block.settings.outline".to_owned()),
+            Some("block.settings.characters".to_owned()),
+            Some("block.settings.world".to_owned()),
+            Some("block.settings.protagonist".to_owned()),
+            Some("block.memory.recent".to_owned()),
+            Some("block.memory.entities".to_owned()),
+            Some("block.memory.facts".to_owned()),
+            Some("block.memory.foreshadowing".to_owned()),
             Some("block.chapter_draft".to_owned()),
             Some("writer.kickoff.rollover".to_owned()),
         ],

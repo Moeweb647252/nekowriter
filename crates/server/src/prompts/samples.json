@@ -1160,7 +1160,7 @@
         }
       }
     ],
-    "block.memory": [
+    "block.memory.recent": [
       {
         "systems": {
           "entities": true,
@@ -1430,7 +1430,857 @@
         }
       }
     ],
-    "block.settings": [
+    "block.memory.entities": [
+      {
+        "systems": {
+          "entities": true,
+          "timeline": true,
+          "memory": true,
+          "foreshadowing": true,
+          "goals": true,
+          "enabled": [
+            "entities",
+            "timeline",
+            "memory",
+            "foreshadowing"
+          ]
+        }
+      },
+      {
+        "systems": {
+          "entities": false,
+          "timeline": true,
+          "memory": true,
+          "foreshadowing": true,
+          "goals": true,
+          "enabled": [
+            "timeline",
+            "memory",
+            "foreshadowing"
+          ]
+        }
+      },
+      {
+        "systems": {
+          "entities": true,
+          "timeline": false,
+          "memory": true,
+          "foreshadowing": true,
+          "goals": true,
+          "enabled": [
+            "entities",
+            "memory",
+            "foreshadowing"
+          ]
+        }
+      },
+      {
+        "systems": {
+          "entities": true,
+          "timeline": true,
+          "memory": false,
+          "foreshadowing": true,
+          "goals": true,
+          "enabled": [
+            "entities",
+            "timeline",
+            "foreshadowing"
+          ]
+        }
+      },
+      {
+        "systems": {
+          "entities": true,
+          "timeline": true,
+          "memory": true,
+          "foreshadowing": false,
+          "goals": true,
+          "enabled": [
+            "entities",
+            "timeline",
+            "memory"
+          ]
+        }
+      },
+      {
+        "systems": {
+          "entities": false,
+          "timeline": false,
+          "memory": false,
+          "foreshadowing": false,
+          "goals": true,
+          "enabled": []
+        }
+      },
+      {
+        "memory": {
+          "is_first": true,
+          "window_mid": 10,
+          "recent_summaries": [],
+          "previous_tail": null,
+          "protagonist": null,
+          "recent_changes": [],
+          "appearances": [],
+          "absent_important": [],
+          "key_notes": [],
+          "open_foreshadowing": [],
+          "cast": [],
+          "counts": {
+            "character": 0,
+            "organization": 0,
+            "location": 0,
+            "item": 0,
+            "other": 0,
+            "event": 0,
+            "fact": 0,
+            "world_rule": 0,
+            "foreshadowing_open": 0,
+            "event_planned": 0
+          }
+        },
+        "chapter": {
+          "id": 45,
+          "number": 13,
+          "label": "第13章",
+          "title": "",
+          "guidance": "",
+          "outline": "",
+          "reference_notes": "",
+          "target_min": 3000,
+          "target_max": 4000,
+          "word_count": 0,
+          "has_draft": false
+        }
+      },
+      {
+        "memory": {
+          "is_first": true,
+          "window_mid": 10,
+          "recent_summaries": [],
+          "previous_tail": null,
+          "protagonist": null,
+          "recent_changes": [],
+          "appearances": [],
+          "absent_important": [],
+          "key_notes": [],
+          "open_foreshadowing": [],
+          "cast": [],
+          "counts": {
+            "character": 0,
+            "organization": 0,
+            "location": 0,
+            "item": 0,
+            "other": 0,
+            "event": 0,
+            "fact": 0,
+            "world_rule": 0,
+            "foreshadowing_open": 0,
+            "event_planned": 0
+          }
+        },
+        "chapter": {
+          "id": 45,
+          "number": 1,
+          "label": "第1章",
+          "title": "",
+          "guidance": "",
+          "outline": "",
+          "reference_notes": "",
+          "target_min": 3000,
+          "target_max": 4000,
+          "word_count": 0,
+          "has_draft": false
+        }
+      },
+      {
+        "memory": {
+          "is_first": false,
+          "window_mid": 10,
+          "recent_summaries": [
+            {
+              "label": "第11章",
+              "title": "剑鸣",
+              "summary": "……"
+            },
+            {
+              "label": "第12章",
+              "title": "",
+              "summary": ""
+            }
+          ],
+          "previous_tail": {
+            "label": "第12章",
+            "text": "雨落下来。"
+          },
+          "protagonist": {
+            "id": 12,
+            "name": "林凡",
+            "status": "active",
+            "status_label": "已死亡",
+            "state": "身处剑冢",
+            "after_anchor": true,
+            "attributes": [
+              {
+                "key": "修为",
+                "value": "筑基中期"
+              }
+            ]
+          },
+          "recent_changes": [
+            {
+              "chapter_label": "第11章",
+              "target": "林凡(#12)",
+              "note": "修为：筑基初期→筑基中期"
+            }
+          ],
+          "appearances": [
+            {
+              "id": 12,
+              "name": "林凡",
+              "count": 2,
+              "chapters": [
+                {
+                  "label": "第11章",
+                  "role_label": "视角"
+                },
+                {
+                  "label": "第12章",
+                  "role_label": "主要"
+                }
+              ]
+            }
+          ],
+          "absent_important": [
+            {
+              "id": 18,
+              "name": "张三",
+              "last_label": "第2章"
+            }
+          ],
+          "key_notes": [
+            {
+              "id": 3,
+              "kind_label": "世界规则",
+              "content": "筑基之前无法御剑。"
+            }
+          ],
+          "open_foreshadowing": [
+            {
+              "id": 9,
+              "title": "黑衣人的剑穗",
+              "planted_label": "第5章"
+            }
+          ],
+          "cast": [
+            {
+              "id": 12,
+              "name": "林凡",
+              "kind_label": "人物",
+              "summary": "外门弟子"
+            },
+            {
+              "id": 20,
+              "name": "青云宗",
+              "kind_label": "组织",
+              "summary": ""
+            }
+          ],
+          "counts": {
+            "character": 10,
+            "organization": 3,
+            "location": 5,
+            "item": 4,
+            "other": 1,
+            "event": 30,
+            "fact": 12,
+            "world_rule": 6,
+            "foreshadowing_open": 4,
+            "event_planned": 5
+          }
+        }
+      }
+    ],
+    "block.memory.facts": [
+      {
+        "systems": {
+          "entities": true,
+          "timeline": true,
+          "memory": true,
+          "foreshadowing": true,
+          "goals": true,
+          "enabled": [
+            "entities",
+            "timeline",
+            "memory",
+            "foreshadowing"
+          ]
+        }
+      },
+      {
+        "systems": {
+          "entities": false,
+          "timeline": true,
+          "memory": true,
+          "foreshadowing": true,
+          "goals": true,
+          "enabled": [
+            "timeline",
+            "memory",
+            "foreshadowing"
+          ]
+        }
+      },
+      {
+        "systems": {
+          "entities": true,
+          "timeline": false,
+          "memory": true,
+          "foreshadowing": true,
+          "goals": true,
+          "enabled": [
+            "entities",
+            "memory",
+            "foreshadowing"
+          ]
+        }
+      },
+      {
+        "systems": {
+          "entities": true,
+          "timeline": true,
+          "memory": false,
+          "foreshadowing": true,
+          "goals": true,
+          "enabled": [
+            "entities",
+            "timeline",
+            "foreshadowing"
+          ]
+        }
+      },
+      {
+        "systems": {
+          "entities": true,
+          "timeline": true,
+          "memory": true,
+          "foreshadowing": false,
+          "goals": true,
+          "enabled": [
+            "entities",
+            "timeline",
+            "memory"
+          ]
+        }
+      },
+      {
+        "memory": {
+          "is_first": true,
+          "window_mid": 10,
+          "recent_summaries": [],
+          "previous_tail": null,
+          "protagonist": null,
+          "recent_changes": [],
+          "appearances": [],
+          "absent_important": [],
+          "key_notes": [],
+          "open_foreshadowing": [],
+          "cast": [],
+          "counts": {
+            "character": 0,
+            "organization": 0,
+            "location": 0,
+            "item": 0,
+            "other": 0,
+            "event": 0,
+            "fact": 0,
+            "world_rule": 0,
+            "foreshadowing_open": 0,
+            "event_planned": 0
+          }
+        },
+        "chapter": {
+          "id": 45,
+          "number": 13,
+          "label": "第13章",
+          "title": "",
+          "guidance": "",
+          "outline": "",
+          "reference_notes": "",
+          "target_min": 3000,
+          "target_max": 4000,
+          "word_count": 0,
+          "has_draft": false
+        }
+      },
+      {
+        "memory": {
+          "is_first": true,
+          "window_mid": 10,
+          "recent_summaries": [],
+          "previous_tail": null,
+          "protagonist": null,
+          "recent_changes": [],
+          "appearances": [],
+          "absent_important": [],
+          "key_notes": [],
+          "open_foreshadowing": [],
+          "cast": [],
+          "counts": {
+            "character": 0,
+            "organization": 0,
+            "location": 0,
+            "item": 0,
+            "other": 0,
+            "event": 0,
+            "fact": 0,
+            "world_rule": 0,
+            "foreshadowing_open": 0,
+            "event_planned": 0
+          }
+        },
+        "chapter": {
+          "id": 45,
+          "number": 1,
+          "label": "第1章",
+          "title": "",
+          "guidance": "",
+          "outline": "",
+          "reference_notes": "",
+          "target_min": 3000,
+          "target_max": 4000,
+          "word_count": 0,
+          "has_draft": false
+        }
+      },
+      {
+        "memory": {
+          "is_first": false,
+          "window_mid": 10,
+          "recent_summaries": [
+            {
+              "label": "第11章",
+              "title": "剑鸣",
+              "summary": "……"
+            },
+            {
+              "label": "第12章",
+              "title": "",
+              "summary": ""
+            }
+          ],
+          "previous_tail": {
+            "label": "第12章",
+            "text": "雨落下来。"
+          },
+          "protagonist": {
+            "id": 12,
+            "name": "林凡",
+            "status": "active",
+            "status_label": "已死亡",
+            "state": "身处剑冢",
+            "after_anchor": true,
+            "attributes": [
+              {
+                "key": "修为",
+                "value": "筑基中期"
+              }
+            ]
+          },
+          "recent_changes": [
+            {
+              "chapter_label": "第11章",
+              "target": "林凡(#12)",
+              "note": "修为：筑基初期→筑基中期"
+            }
+          ],
+          "appearances": [
+            {
+              "id": 12,
+              "name": "林凡",
+              "count": 2,
+              "chapters": [
+                {
+                  "label": "第11章",
+                  "role_label": "视角"
+                },
+                {
+                  "label": "第12章",
+                  "role_label": "主要"
+                }
+              ]
+            }
+          ],
+          "absent_important": [
+            {
+              "id": 18,
+              "name": "张三",
+              "last_label": "第2章"
+            }
+          ],
+          "key_notes": [
+            {
+              "id": 3,
+              "kind_label": "世界规则",
+              "content": "筑基之前无法御剑。"
+            }
+          ],
+          "open_foreshadowing": [
+            {
+              "id": 9,
+              "title": "黑衣人的剑穗",
+              "planted_label": "第5章"
+            }
+          ],
+          "cast": [
+            {
+              "id": 12,
+              "name": "林凡",
+              "kind_label": "人物",
+              "summary": "外门弟子"
+            },
+            {
+              "id": 20,
+              "name": "青云宗",
+              "kind_label": "组织",
+              "summary": ""
+            }
+          ],
+          "counts": {
+            "character": 10,
+            "organization": 3,
+            "location": 5,
+            "item": 4,
+            "other": 1,
+            "event": 30,
+            "fact": 12,
+            "world_rule": 6,
+            "foreshadowing_open": 4,
+            "event_planned": 5
+          }
+        }
+      }
+    ],
+    "block.memory.foreshadowing": [
+      {
+        "systems": {
+          "entities": true,
+          "timeline": true,
+          "memory": true,
+          "foreshadowing": true,
+          "goals": true,
+          "enabled": [
+            "entities",
+            "timeline",
+            "memory",
+            "foreshadowing"
+          ]
+        }
+      },
+      {
+        "systems": {
+          "entities": false,
+          "timeline": true,
+          "memory": true,
+          "foreshadowing": true,
+          "goals": true,
+          "enabled": [
+            "timeline",
+            "memory",
+            "foreshadowing"
+          ]
+        }
+      },
+      {
+        "systems": {
+          "entities": true,
+          "timeline": false,
+          "memory": true,
+          "foreshadowing": true,
+          "goals": true,
+          "enabled": [
+            "entities",
+            "memory",
+            "foreshadowing"
+          ]
+        }
+      },
+      {
+        "systems": {
+          "entities": true,
+          "timeline": true,
+          "memory": false,
+          "foreshadowing": true,
+          "goals": true,
+          "enabled": [
+            "entities",
+            "timeline",
+            "foreshadowing"
+          ]
+        }
+      },
+      {
+        "systems": {
+          "entities": true,
+          "timeline": true,
+          "memory": true,
+          "foreshadowing": false,
+          "goals": true,
+          "enabled": [
+            "entities",
+            "timeline",
+            "memory"
+          ]
+        }
+      },
+      {
+        "memory": {
+          "is_first": true,
+          "window_mid": 10,
+          "recent_summaries": [],
+          "previous_tail": null,
+          "protagonist": null,
+          "recent_changes": [],
+          "appearances": [],
+          "absent_important": [],
+          "key_notes": [],
+          "open_foreshadowing": [],
+          "cast": [],
+          "counts": {
+            "character": 0,
+            "organization": 0,
+            "location": 0,
+            "item": 0,
+            "other": 0,
+            "event": 0,
+            "fact": 0,
+            "world_rule": 0,
+            "foreshadowing_open": 0,
+            "event_planned": 0
+          }
+        },
+        "chapter": {
+          "id": 45,
+          "number": 13,
+          "label": "第13章",
+          "title": "",
+          "guidance": "",
+          "outline": "",
+          "reference_notes": "",
+          "target_min": 3000,
+          "target_max": 4000,
+          "word_count": 0,
+          "has_draft": false
+        }
+      },
+      {
+        "memory": {
+          "is_first": true,
+          "window_mid": 10,
+          "recent_summaries": [],
+          "previous_tail": null,
+          "protagonist": null,
+          "recent_changes": [],
+          "appearances": [],
+          "absent_important": [],
+          "key_notes": [],
+          "open_foreshadowing": [],
+          "cast": [],
+          "counts": {
+            "character": 0,
+            "organization": 0,
+            "location": 0,
+            "item": 0,
+            "other": 0,
+            "event": 0,
+            "fact": 0,
+            "world_rule": 0,
+            "foreshadowing_open": 0,
+            "event_planned": 0
+          }
+        },
+        "chapter": {
+          "id": 45,
+          "number": 1,
+          "label": "第1章",
+          "title": "",
+          "guidance": "",
+          "outline": "",
+          "reference_notes": "",
+          "target_min": 3000,
+          "target_max": 4000,
+          "word_count": 0,
+          "has_draft": false
+        }
+      },
+      {
+        "memory": {
+          "is_first": false,
+          "window_mid": 10,
+          "recent_summaries": [
+            {
+              "label": "第11章",
+              "title": "剑鸣",
+              "summary": "……"
+            },
+            {
+              "label": "第12章",
+              "title": "",
+              "summary": ""
+            }
+          ],
+          "previous_tail": {
+            "label": "第12章",
+            "text": "雨落下来。"
+          },
+          "protagonist": {
+            "id": 12,
+            "name": "林凡",
+            "status": "active",
+            "status_label": "已死亡",
+            "state": "身处剑冢",
+            "after_anchor": true,
+            "attributes": [
+              {
+                "key": "修为",
+                "value": "筑基中期"
+              }
+            ]
+          },
+          "recent_changes": [
+            {
+              "chapter_label": "第11章",
+              "target": "林凡(#12)",
+              "note": "修为：筑基初期→筑基中期"
+            }
+          ],
+          "appearances": [
+            {
+              "id": 12,
+              "name": "林凡",
+              "count": 2,
+              "chapters": [
+                {
+                  "label": "第11章",
+                  "role_label": "视角"
+                },
+                {
+                  "label": "第12章",
+                  "role_label": "主要"
+                }
+              ]
+            }
+          ],
+          "absent_important": [
+            {
+              "id": 18,
+              "name": "张三",
+              "last_label": "第2章"
+            }
+          ],
+          "key_notes": [
+            {
+              "id": 3,
+              "kind_label": "世界规则",
+              "content": "筑基之前无法御剑。"
+            }
+          ],
+          "open_foreshadowing": [
+            {
+              "id": 9,
+              "title": "黑衣人的剑穗",
+              "planted_label": "第5章"
+            }
+          ],
+          "cast": [
+            {
+              "id": 12,
+              "name": "林凡",
+              "kind_label": "人物",
+              "summary": "外门弟子"
+            },
+            {
+              "id": 20,
+              "name": "青云宗",
+              "kind_label": "组织",
+              "summary": ""
+            }
+          ],
+          "counts": {
+            "character": 10,
+            "organization": 3,
+            "location": 5,
+            "item": 4,
+            "other": 1,
+            "event": 30,
+            "fact": 12,
+            "world_rule": 6,
+            "foreshadowing_open": 4,
+            "event_planned": 5
+          }
+        }
+      }
+    ],
+    "block.settings.outline": [
+      {},
+      {
+        "settings": {
+          "outline": "",
+          "world": "",
+          "protagonist": "",
+          "characters": [],
+          "scopes": []
+        },
+        "book": {
+          "title": "青云劫",
+          "genre": "",
+          "idea": "少年身怀残破剑灵。",
+          "writing_language": "zh-CN",
+          "writing_language_name": "简体中文",
+          "unspaced": true
+        }
+      }
+    ],
+    "block.settings.characters": [
+      {},
+      {
+        "settings": {
+          "outline": "",
+          "world": "",
+          "protagonist": "",
+          "characters": [],
+          "scopes": []
+        },
+        "book": {
+          "title": "青云劫",
+          "genre": "",
+          "idea": "少年身怀残破剑灵。",
+          "writing_language": "zh-CN",
+          "writing_language_name": "简体中文",
+          "unspaced": true
+        }
+      }
+    ],
+    "block.settings.world": [
+      {},
+      {
+        "settings": {
+          "outline": "",
+          "world": "",
+          "protagonist": "",
+          "characters": [],
+          "scopes": []
+        },
+        "book": {
+          "title": "青云劫",
+          "genre": "",
+          "idea": "少年身怀残破剑灵。",
+          "writing_language": "zh-CN",
+          "writing_language_name": "简体中文",
+          "unspaced": true
+        }
+      }
+    ],
+    "block.settings.protagonist": [
       {},
       {
         "settings": {

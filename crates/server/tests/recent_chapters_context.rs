@@ -731,8 +731,8 @@ async fn full_writer_kickoff_with_two_prior_chapters_reports_blocks_tags_and_bud
         .expect("kickoff");
     assert_eq!(
         blocks.len(),
-        6,
-        "settings, skills, memory, recent, draft, task"
+        12,
+        "settings, canon, skills, memory, recent, draft, task"
     );
     println!("=== writer kickoff block order ===");
     let mut recent_chars = 0usize;
@@ -846,12 +846,13 @@ async fn the_memory_page_rendered_text_matches_the_writers_memory_block() {
         "chapter_write",
     )
     .await;
-    let memory_block = blocks
+    let memory_start = blocks
         .iter()
-        .find(|block| block.lines().next() == Some("# 记忆"))
-        .expect("the writer's memory block");
+        .position(|block| block.starts_with("# 记忆"))
+        .expect("the writer's memory blocks");
+    let memory_text = blocks[memory_start..memory_start + 4].join("\n\n");
     assert_eq!(
-        rendered, memory_block,
+        rendered, memory_text,
         "the Memory page shows the exact block.memory text the writer receives"
     );
 }

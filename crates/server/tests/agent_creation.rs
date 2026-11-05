@@ -223,9 +223,15 @@ async fn the_kickoff_blocks_follow_the_kind_table() {
         (
             SessionKind::ChapterOutline,
             vec![
-                "block.settings",
+                "block.settings.outline",
+                "block.settings.characters",
+                "block.settings.world",
+                "block.settings.protagonist",
                 "block.canon_systems",
-                "block.memory",
+                "block.memory.recent",
+                "block.memory.entities",
+                "block.memory.facts",
+                "block.memory.foreshadowing",
                 "block.recent_chapters",
                 "block.goals",
                 "planner.kickoff",
@@ -234,10 +240,16 @@ async fn the_kickoff_blocks_follow_the_kind_table() {
         (
             SessionKind::ChapterWrite,
             vec![
-                "block.settings",
+                "block.settings.outline",
+                "block.settings.characters",
+                "block.settings.world",
+                "block.settings.protagonist",
                 "block.canon_systems",
                 "block.writing_skills",
-                "block.memory",
+                "block.memory.recent",
+                "block.memory.entities",
+                "block.memory.facts",
+                "block.memory.foreshadowing",
                 "block.recent_chapters",
                 "block.goals",
                 "block.chapter_draft",
@@ -247,10 +259,16 @@ async fn the_kickoff_blocks_follow_the_kind_table() {
         (
             SessionKind::ChapterRevise,
             vec![
-                "block.settings",
+                "block.settings.outline",
+                "block.settings.characters",
+                "block.settings.world",
+                "block.settings.protagonist",
                 "block.canon_systems",
                 "block.writing_skills",
-                "block.memory",
+                "block.memory.recent",
+                "block.memory.entities",
+                "block.memory.facts",
+                "block.memory.foreshadowing",
                 "block.goals",
                 "block.chapter_draft",
                 "writer.kickoff.revise",
@@ -259,10 +277,16 @@ async fn the_kickoff_blocks_follow_the_kind_table() {
         (
             SessionKind::ChapterReview,
             vec![
-                "block.settings",
+                "block.settings.outline",
+                "block.settings.characters",
+                "block.settings.world",
+                "block.settings.protagonist",
                 "block.canon_systems",
                 "block.writing_skills",
-                "block.memory",
+                "block.memory.recent",
+                "block.memory.entities",
+                "block.memory.facts",
+                "block.memory.foreshadowing",
                 "block.goals",
                 "block.chapter_draft",
                 "reviewer.kickoff",
@@ -271,9 +295,15 @@ async fn the_kickoff_blocks_follow_the_kind_table() {
         (
             SessionKind::ChapterMaintenance,
             vec![
-                "block.settings",
+                "block.settings.outline",
+                "block.settings.characters",
+                "block.settings.world",
+                "block.settings.protagonist",
                 "block.canon_systems",
-                "block.memory",
+                "block.memory.recent",
+                "block.memory.entities",
+                "block.memory.facts",
+                "block.memory.foreshadowing",
                 "block.cast_index",
                 "block.goals",
                 "block.chapter_draft",
@@ -283,7 +313,10 @@ async fn the_kickoff_blocks_follow_the_kind_table() {
         (
             SessionKind::CanonSeed,
             vec![
-                "block.settings",
+                "block.settings.outline",
+                "block.settings.characters",
+                "block.settings.world",
+                "block.settings.protagonist",
                 "block.canon_systems",
                 "archivist.kickoff.seed",
             ],
@@ -291,9 +324,15 @@ async fn the_kickoff_blocks_follow_the_kind_table() {
         (
             SessionKind::ChapterResync,
             vec![
-                "block.settings",
+                "block.settings.outline",
+                "block.settings.characters",
+                "block.settings.world",
+                "block.settings.protagonist",
                 "block.canon_systems",
-                "block.memory",
+                "block.memory.recent",
+                "block.memory.entities",
+                "block.memory.facts",
+                "block.memory.foreshadowing",
                 "block.cast_index",
                 "block.chapter_diff",
                 "archivist.kickoff.resync",
@@ -312,8 +351,8 @@ async fn the_kickoff_blocks_follow_the_kind_table() {
     }
     // Only `block.settings` carries a cache breakpoint (spec/03 §10). A skills block after the
     // settings block is outside the cached prefix; it earns no cache flag (design §6.1).
-    assert!(block_is_cached("block.settings"));
-    assert!(!block_is_cached("block.memory"));
+    assert!(block_is_cached("block.settings.outline"));
+    assert!(!block_is_cached("block.memory.recent"));
     assert!(!block_is_cached("block.writing_skills"));
     assert!(!block_is_cached("writer.kickoff.chapter"));
 }
@@ -342,7 +381,7 @@ async fn the_kickoff_message_holds_one_block_per_kickoff_block() {
     let blocks = kickoff.blocks();
     assert_eq!(
         blocks.len(),
-        4,
+        10,
         "settings · memory · draft · task: {blocks:?}"
     );
     let sources: Vec<Option<String>> = blocks
@@ -355,8 +394,14 @@ async fn the_kickoff_message_holds_one_block_per_kickoff_block() {
     assert_eq!(
         sources,
         vec![
-            Some("block.settings".to_owned()),
-            Some("block.memory".to_owned()),
+            Some("block.settings.outline".to_owned()),
+            Some("block.settings.characters".to_owned()),
+            Some("block.settings.world".to_owned()),
+            Some("block.settings.protagonist".to_owned()),
+            Some("block.memory.recent".to_owned()),
+            Some("block.memory.entities".to_owned()),
+            Some("block.memory.facts".to_owned()),
+            Some("block.memory.foreshadowing".to_owned()),
             Some("block.chapter_draft".to_owned()),
             Some("writer.kickoff.chapter".to_owned()),
         ],
@@ -392,7 +437,7 @@ async fn the_kickoff_message_holds_one_block_per_kickoff_block() {
         "the settings block renders the book: {settings_text}"
     );
     // The task block names the chapter number.
-    let task_text = match &blocks[2] {
+    let task_text = match blocks.last().unwrap() {
         nekowriter::db::json::StoredBlock::Text { text, .. } => text.clone(),
         _ => String::new(),
     };

@@ -40,7 +40,7 @@ for name, t in tools.items():
 expected = """conception.system researcher.system planner.system writer.system reviewer.system archivist.system assistant.system
 conception.kickoff researcher.kickoff researcher.kickoff.prep planner.kickoff writer.kickoff.chapter writer.kickoff.revise
 writer.kickoff.rollover reviewer.kickoff reviewer.rereview archivist.kickoff.maintenance archivist.kickoff.seed
-archivist.kickoff.resync assistant.kickoff block.book_index block.settings block.canon_systems block.writing_skills block.memory block.recent_chapters
+archivist.kickoff.resync assistant.kickoff block.book_index block.settings.outline block.settings.characters block.settings.world block.settings.protagonist block.canon_systems block.writing_skills block.memory.recent block.memory.entities block.memory.facts block.memory.foreshadowing block.recent_chapters
 block.goals block.chapter_draft block.cast_index block.chapter_diff
 block.anchor block.book_brief notice.user_feedback notice.user_message notice.user_edits notice.setting_edits
 notice.anchor_planned notice.completion_revoked notice.tool_not_allowed notice.output_truncated notice.web_content notice.nudge_generic
@@ -257,10 +257,106 @@ S = dict(book=book, track=track_main, chapter=chapter, settings=settings, memory
          session_id=12, kind="chapter_outline", existing=False)
 
 variants = {
-  "block.settings": [dict(), dict(settings=settings_empty, book=dict(book, genre=""))],
+  "block.settings.outline": [dict(), dict(settings=settings_empty, book=dict(book, genre=""))],
+  "block.settings.characters": [dict(), dict(settings=settings_empty, book=dict(book, genre=""))],
+  "block.settings.world": [dict(), dict(settings=settings_empty, book=dict(book, genre=""))],
+  "block.settings.protagonist": [dict(), dict(settings=settings_empty, book=dict(book, genre=""))],
   "block.writing_skills": [dict()],
   "block.recent_chapters": [dict(), dict(chapters=[dict(number=12, label="第12章", title="", text="雨落下来。", partial=False)])],
-  "block.memory": [dict(systems=s) for s in systems_cases] + [
+  "block.memory.recent": [dict(systems=s) for s in systems_cases] + [
+      dict(memory=memory_first, chapter=chapter_blank), dict(memory=memory_first, chapter=dict(chapter_blank, number=1, label="第1章")),
+      dict(memory=dict(memory, protagonist=dict(memory["protagonist"], after_anchor=True, status="active")))],
+  "block.canon_systems": [dict(systems=s) for s in systems_cases],
+  "block.goals": [dict(goals=goals_sample, systems=s) for s in systems_cases] + [dict(goals=goals_empty, systems=systems_all)],
+  "block.chapter_draft": [dict(), dict(draft=draft_empty, chapter=chapter_blank)],
+  "block.anchor": [dict(track=track_side), dict(track=track_prequel), dict(track=dict(track_side, anchor_kind="after_end", canon_mode="canon"))],
+  "block.cast_index": [dict(), dict(cast_index=[])],
+  "block.chapter_diff": [dict(), dict(diff=dict(changes=[]))],
+  "planner.kickoff": [dict(), dict(chapter=dict(chapter_blank, outline="## 旧细纲", reference_notes="")),
+                      dict(track=track_side, chapter=dict(chapter_blank))],
+  "writer.kickoff.chapter": [dict(feedback=None), dict(feedback=None, chapter=dict(chapter_blank, has_draft=False)),
+                             dict(), dict(track=track_side, chapter=dict(chapter_blank, has_draft=False), feedback=None)],
+  "writer.kickoff.revise": [dict(), dict(track=track_side, chapter=chapter_blank)],
+  "writer.kickoff.rollover": [dict(), dict(feedback=None, chapter=chapter_blank),
+                              dict(phase="revising", granularity=dict(gran["sentence"], revising=True)),
+                              dict(phase="revising", granularity=dict(gran["chapter"], revising=True), revision_plan="", author_notes=[], chapter=chapter_blank,
+                                   feedback=dict(text="改短一些", issues=[]))],
+  "reviewer.kickoff": [dict(), dict(track=track_side, chapter=chapter_blank), dict(prior=prior)],
+  "archivist.kickoff.maintenance": [dict(systems=s, goals=g) for s in systems_cases for g in [goals_empty, goals_sample]] + [dict(track=track_side)],
+  "archivist.kickoff.seed": [dict(systems=s) for s in systems_cases],
+  "archivist.kickoff.resync": [dict(systems=s) for s in systems_cases] + [dict(track=track_side)],
+  "researcher.kickoff": [dict(), dict(research=dict(S["research"], requirements="", scope_description="", existing_titles=[]))],
+  "researcher.kickoff.prep": [dict(), dict(prep=dict(S["prep"], scopes=[], excluded_names=[]))],
+  "conception.kickoff": [
+      dict(conception=dict(S["conception"], genre="仙侠", scopes=[], knowledge_report="", research_tasks=[])),
+      dict(conception=dict(S["conception"], genre="仙侠")),
+      dict(conception=dict(S["conception"], knowledge_report="已有知识足够支撑设定，新增了两条背景条目。",
+                           research_tasks=[dict(topic="宋代市井", requirements="茶馆", scope_name="宋代社会", status="draft", entries_created=0)])),
+  ],
+
+  "block.memory.entities": [dict(systems=s) for s in systems_cases] + [
+      dict(memory=memory_first, chapter=chapter_blank), dict(memory=memory_first, chapter=dict(chapter_blank, number=1, label="第1章")),
+      dict(memory=dict(memory, protagonist=dict(memory["protagonist"], after_anchor=True, status="active")))],
+  "block.canon_systems": [dict(systems=s) for s in systems_cases],
+  "block.goals": [dict(goals=goals_sample, systems=s) for s in systems_cases] + [dict(goals=goals_empty, systems=systems_all)],
+  "block.chapter_draft": [dict(), dict(draft=draft_empty, chapter=chapter_blank)],
+  "block.anchor": [dict(track=track_side), dict(track=track_prequel), dict(track=dict(track_side, anchor_kind="after_end", canon_mode="canon"))],
+  "block.cast_index": [dict(), dict(cast_index=[])],
+  "block.chapter_diff": [dict(), dict(diff=dict(changes=[]))],
+  "planner.kickoff": [dict(), dict(chapter=dict(chapter_blank, outline="## 旧细纲", reference_notes="")),
+                      dict(track=track_side, chapter=dict(chapter_blank))],
+  "writer.kickoff.chapter": [dict(feedback=None), dict(feedback=None, chapter=dict(chapter_blank, has_draft=False)),
+                             dict(), dict(track=track_side, chapter=dict(chapter_blank, has_draft=False), feedback=None)],
+  "writer.kickoff.revise": [dict(), dict(track=track_side, chapter=chapter_blank)],
+  "writer.kickoff.rollover": [dict(), dict(feedback=None, chapter=chapter_blank),
+                              dict(phase="revising", granularity=dict(gran["sentence"], revising=True)),
+                              dict(phase="revising", granularity=dict(gran["chapter"], revising=True), revision_plan="", author_notes=[], chapter=chapter_blank,
+                                   feedback=dict(text="改短一些", issues=[]))],
+  "reviewer.kickoff": [dict(), dict(track=track_side, chapter=chapter_blank), dict(prior=prior)],
+  "archivist.kickoff.maintenance": [dict(systems=s, goals=g) for s in systems_cases for g in [goals_empty, goals_sample]] + [dict(track=track_side)],
+  "archivist.kickoff.seed": [dict(systems=s) for s in systems_cases],
+  "archivist.kickoff.resync": [dict(systems=s) for s in systems_cases] + [dict(track=track_side)],
+  "researcher.kickoff": [dict(), dict(research=dict(S["research"], requirements="", scope_description="", existing_titles=[]))],
+  "researcher.kickoff.prep": [dict(), dict(prep=dict(S["prep"], scopes=[], excluded_names=[]))],
+  "conception.kickoff": [
+      dict(conception=dict(S["conception"], genre="仙侠", scopes=[], knowledge_report="", research_tasks=[])),
+      dict(conception=dict(S["conception"], genre="仙侠")),
+      dict(conception=dict(S["conception"], knowledge_report="已有知识足够支撑设定，新增了两条背景条目。",
+                           research_tasks=[dict(topic="宋代市井", requirements="茶馆", scope_name="宋代社会", status="draft", entries_created=0)])),
+  ],
+
+  "block.memory.facts": [dict(systems=s) for s in systems_cases[:-1]] + [
+      dict(memory=memory_first, chapter=chapter_blank), dict(memory=memory_first, chapter=dict(chapter_blank, number=1, label="第1章")),
+      dict(memory=dict(memory, protagonist=dict(memory["protagonist"], after_anchor=True, status="active")))],
+  "block.canon_systems": [dict(systems=s) for s in systems_cases],
+  "block.goals": [dict(goals=goals_sample, systems=s) for s in systems_cases] + [dict(goals=goals_empty, systems=systems_all)],
+  "block.chapter_draft": [dict(), dict(draft=draft_empty, chapter=chapter_blank)],
+  "block.anchor": [dict(track=track_side), dict(track=track_prequel), dict(track=dict(track_side, anchor_kind="after_end", canon_mode="canon"))],
+  "block.cast_index": [dict(), dict(cast_index=[])],
+  "block.chapter_diff": [dict(), dict(diff=dict(changes=[]))],
+  "planner.kickoff": [dict(), dict(chapter=dict(chapter_blank, outline="## 旧细纲", reference_notes="")),
+                      dict(track=track_side, chapter=dict(chapter_blank))],
+  "writer.kickoff.chapter": [dict(feedback=None), dict(feedback=None, chapter=dict(chapter_blank, has_draft=False)),
+                             dict(), dict(track=track_side, chapter=dict(chapter_blank, has_draft=False), feedback=None)],
+  "writer.kickoff.revise": [dict(), dict(track=track_side, chapter=chapter_blank)],
+  "writer.kickoff.rollover": [dict(), dict(feedback=None, chapter=chapter_blank),
+                              dict(phase="revising", granularity=dict(gran["sentence"], revising=True)),
+                              dict(phase="revising", granularity=dict(gran["chapter"], revising=True), revision_plan="", author_notes=[], chapter=chapter_blank,
+                                   feedback=dict(text="改短一些", issues=[]))],
+  "reviewer.kickoff": [dict(), dict(track=track_side, chapter=chapter_blank), dict(prior=prior)],
+  "archivist.kickoff.maintenance": [dict(systems=s, goals=g) for s in systems_cases for g in [goals_empty, goals_sample]] + [dict(track=track_side)],
+  "archivist.kickoff.seed": [dict(systems=s) for s in systems_cases],
+  "archivist.kickoff.resync": [dict(systems=s) for s in systems_cases] + [dict(track=track_side)],
+  "researcher.kickoff": [dict(), dict(research=dict(S["research"], requirements="", scope_description="", existing_titles=[]))],
+  "researcher.kickoff.prep": [dict(), dict(prep=dict(S["prep"], scopes=[], excluded_names=[]))],
+  "conception.kickoff": [
+      dict(conception=dict(S["conception"], genre="仙侠", scopes=[], knowledge_report="", research_tasks=[])),
+      dict(conception=dict(S["conception"], genre="仙侠")),
+      dict(conception=dict(S["conception"], knowledge_report="已有知识足够支撑设定，新增了两条背景条目。",
+                           research_tasks=[dict(topic="宋代市井", requirements="茶馆", scope_name="宋代社会", status="draft", entries_created=0)])),
+  ],
+
+  "block.memory.foreshadowing": [dict(systems=s) for s in systems_cases[:-1]] + [
       dict(memory=memory_first, chapter=chapter_blank), dict(memory=memory_first, chapter=dict(chapter_blank, number=1, label="第1章")),
       dict(memory=dict(memory, protagonist=dict(memory["protagonist"], after_anchor=True, status="active")))],
   "block.canon_systems": [dict(systems=s) for s in systems_cases],

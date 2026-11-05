@@ -237,7 +237,7 @@ fn the_seed_kickoff_asks_for_uncapped_planned_nodes_and_no_invented_foreshadowin
 fn the_memory_block_shows_the_planned_event_count() {
     let registry = PromptRegistry::embedded().expect("pack");
     let mut context = registry
-        .sample_contexts("block.memory")
+        .sample_contexts("block.memory.foreshadowing")
         .into_iter()
         .next()
         .expect("memory sample");
@@ -245,8 +245,8 @@ fn the_memory_block_shows_the_planned_event_count() {
     context["memory"]["counts"]["event_planned"] = json!(3);
     let text = registry
         .defaults_only()
-        .render("block.memory", &context)
-        .expect("block.memory")
+        .render("block.memory.foreshadowing", &context)
+        .expect("block.memory.foreshadowing")
         .text;
     assert!(
         text.contains("时间线事件 7（其中计划中 3）"),
@@ -444,7 +444,9 @@ fn every_spec_key_exists_and_every_key_is_documented() {
         archivist.system conception.kickoff researcher.kickoff planner.kickoff writer.kickoff.chapter \
         writer.kickoff.revise writer.kickoff.rollover reviewer.kickoff reviewer.rereview \
         archivist.kickoff.maintenance archivist.kickoff.seed archivist.kickoff.resync \
-        block.settings block.canon_systems block.writing_skills block.memory block.recent_chapters \
+        block.settings.outline block.settings.characters block.settings.world block.settings.protagonist \
+        block.canon_systems block.writing_skills block.memory.recent block.memory.entities \
+        block.memory.facts block.memory.foreshadowing block.recent_chapters \
         block.goals block.chapter_draft block.cast_index block.chapter_diff \
         block.anchor block.book_brief notice.user_feedback notice.user_message notice.user_edits \
         notice.setting_edits notice.completion_revoked notice.tool_not_allowed \
@@ -608,7 +610,7 @@ fn context_structs_match_the_sample_shapes() {
     assert!(rendered.text.contains("t"));
     let rendered = set
         .render(
-            "block.settings",
+            "block.settings.outline",
             &json!({ "book": book, "settings": SettingsContext {
             outline: String::new(), world: String::new(), protagonist: String::new(),
             characters: vec![], scopes: vec![],

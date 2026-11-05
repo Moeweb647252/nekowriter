@@ -1467,17 +1467,29 @@ fn render_block_memory(prompts: &PromptSet, snapshot: &MemorySnapshot) -> Result
         word_count: 0,
         has_draft: false,
     };
-    let rendered = prompts
-        .render_value(
-            "block.memory",
-            crate::prompts::template_value(&serde_json::json!({
-                "memory": memory_context(snapshot),
-                "chapter": chapter,
-                "systems": crate::prompts::context::SystemsContext::from(&snapshot.systems),
-            })),
-        )
-        .map_err(|err| err.into_app_error())?;
-    Ok(rendered.text)
+    let context = crate::prompts::template_value(&serde_json::json!({
+        "memory": memory_context(snapshot),
+        "chapter": chapter,
+        "systems": crate::prompts::context::SystemsContext::from(&snapshot.systems),
+    }));
+    let mut text = String::new();
+    for key in [
+        "block.memory.recent",
+        "block.memory.entities",
+        "block.memory.facts",
+        "block.memory.foreshadowing",
+    ] {
+        let rendered = prompts
+            .render_value(key, context.clone())
+            .map_err(|err| err.into_app_error())?;
+        if !rendered.text.is_empty() {
+            if !text.is_empty() {
+                text.push_str("\n\n");
+            }
+            text.push_str(&rendered.text);
+        }
+    }
+    Ok(text)
 }
 
 /// The `memory` context of `block.memory` (spec/09 §2 `vars.memory`).
