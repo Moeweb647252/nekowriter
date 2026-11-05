@@ -45,7 +45,7 @@ async fn the_migration_seeds_the_read_only_basic_writing_skill() {
     );
     assert_eq!(
         skill["description"],
-        "剥离机器的工整感，用带着企图的观察、错位的对话交锋、单行短句的呼吸节奏与粗粝的生理反馈，写出真人的掌控力。"
+        "将章节细纲与设定集转化为具备强镜头感、高情绪张力、去AI味且符合移动端阅读节奏的高质量网文正文。"
     );
     assert_eq!(skill["enabled_by_default"], false);
     assert_eq!(skill["retired"], false);

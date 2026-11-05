@@ -21,6 +21,7 @@ mod m0011_check_topics;
 mod m0012_book_agent;
 mod m0013_timeline_tree;
 mod m0014_step_pause;
+mod m0015_basic_writing_body;
 
 pub struct Migrator;
 
@@ -42,6 +43,7 @@ impl MigratorTrait for Migrator {
             Box::new(m0012_book_agent::Migration),
             Box::new(m0013_timeline_tree::Migration),
             Box::new(m0014_step_pause::Migration),
+            Box::new(m0015_basic_writing_body::Migration),
         ]
     }
 }
