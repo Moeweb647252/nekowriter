@@ -24,7 +24,7 @@ export type PendingTextProps = {
 
 export function PendingText({ paragraphs, unspaced }: PendingTextProps) {
   return (
-    <div>
+    <div className="pending-text">
       <div className={unspaced ? "prose-cjk" : "prose-latin"}>
         {paragraphs.map((paragraph) => (
           <p

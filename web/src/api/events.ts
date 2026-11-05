@@ -7,6 +7,9 @@
 import type { QueryClient } from "@tanstack/react-query"
 
 import type { ChapterDto } from "@/api/gen/ChapterDto"
+import type { SessionDto } from "@/api/gen/SessionDto"
+import type { SessionSnapshotDto } from "@/api/gen/SessionSnapshotDto"
+import type { ToolCallDto } from "@/api/gen/ToolCallDto"
 import type { ContentOp } from "@/api/gen/ContentOp"
 import { keys } from "@/api/keys"
 import { useChapterDoc } from "@/stores/chapterDoc"
@@ -46,6 +49,74 @@ function invalidateContextCurrent(queryClient: QueryClient, sessionId: number): 
       void queryClient.invalidateQueries({ queryKey: keys.sessions.context(sessionId, null) })
     }, remaining),
   )
+}
+
+function updateChapterOpenSession(
+  queryClient: QueryClient,
+  chapterId: number,
+  session: Record<string, unknown>,
+): void {
+  const cached = queryClient.getQueryData<ChapterDto>(keys.chapters.detail(chapterId))
+  if (cached === undefined) {
+    void queryClient.invalidateQueries({ queryKey: keys.chapters.detail(chapterId) })
+    return
+  }
+  const sessions = cached.open_sessions ?? []
+  const id = session.id
+  if (typeof id !== "number") return
+  const terminal =
+    session.status === "completed" ||
+    session.status === "superseded" ||
+    session.status === "abandoned"
+  const next = terminal
+    ? sessions.filter((item) => item.id !== id)
+    : sessions.some((item) => item.id === id)
+      ? sessions.map((item) =>
+          item.id === id ? ({ ...item, ...session } as SessionDto) : item,
+        )
+      : [...sessions, session as unknown as SessionDto]
+  queryClient.setQueryData(keys.chapters.detail(chapterId), {
+    ...cached,
+    open_sessions: next,
+  })
+}
+
+function updateSessionSnapshot(
+  queryClient: QueryClient,
+  sessionId: number,
+  session: Record<string, unknown>,
+): void {
+  const cached = queryClient.getQueryData<SessionSnapshotDto>(keys.sessions.detail(sessionId))
+  if (cached === undefined) {
+    void queryClient.invalidateQueries({ queryKey: keys.sessions.detail(sessionId) })
+    return
+  }
+  queryClient.setQueryData(keys.sessions.detail(sessionId), {
+    ...cached,
+    session: { ...cached.session, ...session } as SessionDto,
+  })
+}
+
+function updateCachedToolCall(
+  queryClient: QueryClient,
+  sessionId: number,
+  call: Record<string, unknown>,
+): void {
+  const cached = queryClient.getQueryData<SessionSnapshotDto>(keys.sessions.detail(sessionId))
+  if (cached === undefined) {
+    void queryClient.invalidateQueries({ queryKey: keys.sessions.detail(sessionId) })
+    return
+  }
+  const id = call.id
+  if (typeof id !== "number") return
+  const toolCalls = cached.tool_calls ?? []
+  const next = toolCalls.some((item) => item.id === id)
+    ? toolCalls.map((item) => (item.id === id ? ({ ...item, ...call } as ToolCallDto) : item))
+    : [...toolCalls, call as unknown as ToolCallDto]
+  queryClient.setQueryData(keys.sessions.detail(sessionId), {
+    ...cached,
+    tool_calls: next,
+  })
 }
 
 let source: EventSource | null = null
@@ -330,6 +401,10 @@ export function applyServerEvent(
               ? data.word_count
               : cached.word_count,
         })
+        // The write is now visibly in the chapter; a pinned preview has handed off.
+        for (const session of cached.open_sessions ?? []) {
+          useLiveStore.getState().clearSessionPreviews(session.id)
+        }
       }
       return
     }
@@ -507,8 +582,11 @@ export function applyServerEvent(
       // The persisted message supersedes the live buffers of its sequence (spec/11 §4.3).
       const seq = message.seq
       if (typeof seq === "number") {
+        // Flush a preview that arrived in the same frame before pinning it; otherwise the pending
+        // buffer would be dropped and the handoff would still lose the sentence.
+        flushLiveDeltas()
         dropPending(sessionId, seq)
-        useLiveStore.getState().clearSeq(sessionId, seq)
+        useLiveStore.getState().clearSeq(sessionId, seq, true)
       }
       void queryClient.invalidateQueries({
         queryKey: keys.sessions.detail(sessionId),
@@ -516,45 +594,58 @@ export function applyServerEvent(
       invalidateContextCurrent(queryClient, sessionId)
       return
     }
-    case "session.updated":
-    case "session.tool_call": {
+    case "session.updated": {
       if (data === null) {
         return
       }
       const session = payloadRecord(data.session)
-      const sessionId = data.session_id ?? session?.id
-      if (typeof sessionId === "number") {
-        void queryClient.invalidateQueries({
-          queryKey: keys.sessions.detail(sessionId),
-        })
-        invalidateContextCurrent(queryClient, sessionId)
-      }
-      // The book session list feeds the studio's session choice (and the conception studio's
-      // pre-session state): an auto-started conception session must replace that pane without a
-      // reload. `session.tool_call` carries no full session, so this only applies to
-      // `session.updated`.
-      const bookId = session?.book_id
+      if (session === null) return
+      const sessionId = data.session_id ?? session.id
+      if (typeof sessionId !== "number") return
+      // The event carries the complete session (spec/11 §4.2): write it into both caches in the
+      // same frame. Invalidating here made the chapter refetch before the session snapshot knew
+      // it was held, so the merged draft appeared late (the blank gap).
+      updateSessionSnapshot(queryClient, sessionId, session)
+      invalidateContextCurrent(queryClient, sessionId)
+      const bookId = session.book_id
       if (typeof bookId === "number") {
         void queryClient.invalidateQueries({ queryKey: keys.sessions.list(bookId) })
       }
-      // `ChapterDto.open_sessions` is this client's only handle on a chapter's writer session, and
-      // it is cached under the chapter's own key (spec/10 §2.8). A session that the *agent* drives
-      // into `held` — `auto_pause`, or `pause_after_outline` — produces no client mutation, so
-      // without this the chapter kept `status: "running"`, `useWriterState` never subscribed to the
-      // snapshot (it does so only for a held session), and the draft pane's dock and merged preview
-      // stayed invisible until a reload (D-144). Author-driven changes were already covered:
-      // `invalidateSession` in `hooks/sessions.ts` invalidates the same chapter key.
-      //
-      // Scoped to the chapter the payload names: conception, research and canon-seed sessions have
-      // no `chapter_id` and must not invalidate a chapter. `session.updated` carries the whole
-      // `SessionDto`; `session.tool_call` carries only `{session_id, tool_call}`, so for it this is a
-      // no-op — the server publishes a `session.updated` in the same batch as every tool call
-      // (spec/10 §3), and that event carries the chapter.
-      const chapterId = session?.chapter_id
+      const chapterId = session.chapter_id
       if (typeof chapterId === "number") {
-        void queryClient.invalidateQueries({
-          queryKey: keys.chapters.detail(chapterId),
-        })
+        updateChapterOpenSession(queryClient, chapterId, session)
+      }
+      const status = session.status
+      if (
+        status === "held" ||
+        status === "stopped" ||
+        status === "failed" ||
+        status === "interrupted" ||
+        status === "completed" ||
+        status === "superseded" ||
+        status === "abandoned"
+      ) {
+        // A held write's pending draft (or a terminal state) is the replacement for its preview.
+        useLiveStore.getState().clearSessionPreviews(sessionId)
+      }
+      return
+    }
+    case "session.tool_call": {
+      if (data === null) {
+        return
+      }
+      const call = payloadRecord(data.tool_call)
+      const sessionId = data.session_id
+      if (typeof sessionId !== "number" || call === null) return
+      updateCachedToolCall(queryClient, sessionId, call)
+      invalidateContextCurrent(queryClient, sessionId)
+      // The staged call itself is not yet visible as the pending draft: the following
+      // `session.updated` moves the chapter's open session to held in the same batch, and that
+      // handler clears the preview. An errored call is visibly finished here, so it can clear now.
+      if (call.is_error === true) {
+        if (typeof call.seq === "number" && typeof call.call_index === "number") {
+          useLiveStore.getState().clearPreview(sessionId, call.seq, call.call_index)
+        }
       }
       return
     }

@@ -173,6 +173,11 @@ describe("PendingText", () => {
     expect(screen.getByRole("textbox")).toBeInTheDocument()
   })
 
+  it("enters through the 180ms pending-text transition class", () => {
+    const { container } = render(<PendingText paragraphs={VIEW.paragraphs} unspaced />)
+    expect(container.firstElementChild).toHaveClass("pending-text")
+  })
+
   it("does not offer the paragraph editor", () => {
     // The merged text is not the draft's; editing it would save a paragraph the author is not
     // looking at and bump the version the staged write is compared against.

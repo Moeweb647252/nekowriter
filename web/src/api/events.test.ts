@@ -168,13 +168,21 @@ describe("delta coalescing", () => {
     expect(isInvalidated(client, keys.books.overview(1))).toBe(true)
   })
 
-  it("invalidates the chapter a session.updated names, so an agent-driven hold reaches the dock", () => {
-    // `ChapterDto.open_sessions` is the client's only handle on the chapter's writer session, and
-    // `useWriterState` subscribes to the session snapshot only while that session is `held`. When
-    // the agent holds (`auto_pause`, `pause_after_outline`) no client mutation runs, so the chapter
-    // query has to be refreshed by the event; without it the cached session stayed `running`, the
-    // dock and the merged preview never appeared, and a reload "fixed" it (D-144).
+  it("writes session.updated into the chapter open_sessions and session caches", () => {
     const client = seededClient()
+    client.setQueryData(keys.chapters.detail(9), {
+      id: 9,
+      open_sessions: [{ id: 11, status: "running", chapter_id: 9 }],
+    })
+    client.setQueryData(keys.sessions.detail(11), {
+      session: { id: 11, status: "running", chapter_id: 9 },
+      messages: [],
+      tool_calls: [],
+      inbox: [],
+      inbox_pending: 0,
+      system_prompt: "",
+      tool_names: [],
+    })
     applyServerEvent(client, "session.updated", {
       session: {
         id: 11,
@@ -187,8 +195,36 @@ describe("delta coalescing", () => {
       },
     })
 
-    expect(isInvalidated(client, keys.chapters.detail(9))).toBe(true)
-    expect(isInvalidated(client, keys.sessions.list(1))).toBe(true)
+    expect(
+      client.getQueryData<{ open_sessions: { status: string }[] }>(keys.chapters.detail(9))
+        ?.open_sessions[0]?.status,
+    ).toBe("held")
+    expect(
+      client.getQueryData<{ session: { status: string } }>(keys.sessions.detail(11))?.session.status,
+    ).toBe("held")
+    expect(isInvalidated(client, keys.chapters.detail(9))).toBe(false)
+    expect(isInvalidated(client, keys.sessions.detail(11))).toBe(false)
+  })
+
+  it("writes session.tool_call into the cached session snapshot", () => {
+    const client = seededClient()
+    client.setQueryData(keys.sessions.detail(13), {
+      session: { id: 13, status: "held" },
+      messages: [],
+      tool_calls: [],
+      inbox: [],
+      inbox_pending: 0,
+      system_prompt: "",
+      tool_names: [],
+    })
+    applyServerEvent(client, "session.tool_call", {
+      session_id: 13,
+      tool_call: { id: 2, seq: 4, call_index: 0, name: "insert_text", status: "held" },
+    })
+    expect(
+      client.getQueryData<{ tool_calls: { id: number }[] }>(keys.sessions.detail(13))
+        ?.tool_calls[0]?.id,
+    ).toBe(2)
   })
 
   afterEach(() => { vi.useRealTimers() })
@@ -207,6 +243,8 @@ describe("delta coalescing", () => {
 
   it("coalesces Context invalidations to one per second", () => {
     vi.useFakeTimers()
+    // The rate limiter is module state; move past any timestamp left by an earlier event test.
+    vi.setSystemTime(Date.now() + 2_000)
     const client = seededClient()
     const spy = vi.spyOn(client, "invalidateQueries")
     const contextCalls = () => spy.mock.calls.filter((args) => JSON.stringify(args).includes('"context"')).length
@@ -236,6 +274,45 @@ describe("delta coalescing", () => {
     })
 
     expect(isInvalidated(client, keys.chapters.detail(9))).toBe(false)
+  })
+
+  it("pins a writer preview across the persisted message instead of deleting it", () => {
+    const client = new QueryClient()
+    useLiveStore.setState({
+      streams: {},
+      previews: {
+        "13:4:0": { name: "insert_text", field: "text", text: "写了一半" },
+        "13:4:1": { name: "read_draft", field: "query", text: "not prose" },
+      },
+    })
+    applyServerEvent(client, "session.message", { session_id: 13, message: { id: 9, seq: 4 } })
+    expect(useLiveStore.getState().previews["13:4:0"]).toMatchObject({
+      text: "写了一半",
+      pinned: true,
+    })
+    expect(useLiveStore.getState().previews["13:4:1"]).toBeUndefined()
+  })
+
+  it("clears a pinned preview when the staged call is written into the cache", () => {
+    const client = seededClient()
+    useLiveStore.setState({
+      streams: {},
+      previews: { "13:4:0": { name: "insert_text", field: "text", text: "写完了", pinned: true } },
+    })
+    client.setQueryData(keys.sessions.detail(13), {
+      session: { id: 13, status: "held" },
+      messages: [],
+      tool_calls: [],
+      inbox: [],
+      inbox_pending: 0,
+      system_prompt: "",
+      tool_names: [],
+    })
+    applyServerEvent(client, "session.tool_call", {
+      session_id: 13,
+      tool_call: { id: 2, seq: 4, call_index: 0, name: "insert_text", status: "error", is_error: true },
+    })
+    expect(useLiveStore.getState().previews["13:4:0"]).toBeUndefined()
   })
 
   it("drops buffered deltas when the persisted message arrives", () => {
