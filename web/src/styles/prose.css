@@ -41,6 +41,13 @@
   white-space: pre-wrap;
 }
 
+/* A ghost that streams inside a paragraph inherits the column's `text-indent` and would indent its
+   own first line again; keep it at the paragraph's single indent. */
+.prose-cjk p .ghost-text,
+.prose-cjk div .ghost-text {
+  text-indent: 0;
+}
+
 .ghost-caret {
   display: inline-block;
   width: 0.5ch;

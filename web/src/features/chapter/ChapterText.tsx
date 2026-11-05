@@ -187,6 +187,17 @@ export function ChapterText({
     [paragraphs],
   )
 
+  // return to the bottom.
+  const followingRef = useRef<HTMLDivElement>(null)
+  const streamedLength = writer.preview?.text.length ?? 0
+  const pendingLength = pendingView?.paragraphs.length ?? 0
+  useEffect(() => {
+    const scroller = followingRef.current?.closest<HTMLElement>("[data-draft-scroll]")
+    if (scroller === null || scroller === undefined) return
+    const distance = scroller.scrollHeight - scroller.scrollTop - scroller.clientHeight
+    if (distance < 120) scroller.scrollTop = scroller.scrollHeight
+  }, [streamedLength, pendingLength])
+
   if (fullTextOpen) {
     return (
       <FullTextEditor
@@ -226,11 +237,13 @@ export function ChapterText({
             confirmed: pendingView.confirmedWords,
           })
 
+  // The agent appends into the draft: keep the tail in view when the author is already at the
+  // bottom, so a long paragraph does not stream out of sight. Scrolling up opts out until they
   return (
-    <div className="mx-auto max-w-[42em]">
+    <div className="mx-auto max-w-[42em]" ref={followingRef}>
       {/* Pinned under the tab list: the status line and the full-text action stay put while the
           draft scrolls beneath them (the author asked for it to sit right below the tabs). */}
-      <div className="sticky top-0 z-10 -mx-6 -mt-6 mb-4 flex items-center justify-between gap-2 bg-background px-6 pt-6 pb-2">
+      <div className="sticky top-0 z-10 -mx-6 mb-4 flex items-center justify-between gap-2 bg-background px-6 pb-2">
         {/*
           The status row carries the lock line: the same height in every state, with the icon in the
           running tint. The full sentence lives in `title`; the visible line truncates rather than

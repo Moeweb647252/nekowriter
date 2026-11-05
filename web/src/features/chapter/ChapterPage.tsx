@@ -148,7 +148,7 @@ export default function ChapterPage() {
         </div>
         <TabsContent value="text" className="flex min-h-0 flex-1 flex-col p-0">
           <div data-draft-region className="flex min-h-0 flex-1 flex-col">
-          <div className="min-h-0 flex-1 overflow-auto p-6">
+          <div data-draft-scroll className="min-h-0 flex-1 overflow-auto px-6 pb-6">
           <ChapterText
             key={document.id}
             chapter={document}
