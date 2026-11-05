@@ -29,6 +29,16 @@ describe("GhostText", () => {
     expect(container).toBeEmptyDOMElement()
   })
 
+  it("pins a handed-off writer preview without a caret", () => {
+    const { container } = render(
+      <GhostText
+        preview={{ name: "insert_text", field: "text", text: "已写完的一句。", pinned: true }}
+      />,
+    )
+    expect(container.querySelector(".ghost-text")?.textContent).toContain("已写完的一句。")
+    expect(container.querySelector(".ghost-caret")).not.toBeInTheDocument()
+  })
+
   it("renders nothing for a tool without a text preview field", () => {
     const { container } = render(
       <GhostText preview={{ name: "submit_outline", field: "outline", text: "场景一" }} />,

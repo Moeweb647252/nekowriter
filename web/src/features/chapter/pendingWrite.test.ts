@@ -97,6 +97,24 @@ describe("pendingStanding", () => {
   it("has no standing when nothing is staged", () => {
     expect(pendingStanding(undefined, 4)).toBeUndefined()
   })
+  it("is current when the newer draft already equals the staged content", () => {
+    // Approval bumps the chapter version as the write lands. Until the call is refetched, the
+    // version differs; the matching text proves the write is already applied, not superseded.
+    const staged = content([["p1", "A"], ["p2", "B"]])
+    const write = pendingWrite(writeCall(staged, 4))
+    expect(
+      pendingStanding(write, 5, [
+        { pid: "p1", text: "A" },
+        { pid: "p2", text: "B" },
+      ]),
+    ).toBe("current")
+    expect(
+      pendingStanding(write, 5, [
+        { pid: "p1", text: "author" },
+        { pid: "p2", text: "B" },
+      ]),
+    ).toBe("superseded")
+  })
 })
 
 describe("mergedPending", () => {

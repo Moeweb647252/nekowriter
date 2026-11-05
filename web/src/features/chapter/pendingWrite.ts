@@ -101,11 +101,33 @@ export function pendingWrite(call: ToolCallDto | undefined): PendingWrite | unde
 export function pendingStanding(
   write: PendingWrite | undefined,
   draftVersion: number,
+  draftParagraphs?: readonly { pid: string; text: string }[],
 ): PendingStanding | undefined {
   if (write === undefined) {
     return undefined
   }
-  return write.expectedVersion === draftVersion ? "current" : "superseded"
+  if (write.expectedVersion === draftVersion) {
+    return "current"
+  }
+  // The chapter version can move after a write is applied (the write itself bumps it). If the
+  // current text is exactly the staged snapshot, the write is already in the chapter — not stale.
+  if (draftParagraphs !== undefined && sameContent(write.content, draftParagraphs)) {
+    return "current"
+  }
+  return "superseded"
+}
+
+function sameContent(
+  content: ChapterContent,
+  paragraphs: readonly { pid: string; text: string }[],
+): boolean {
+  return (
+    content.paragraphs.length === paragraphs.length &&
+    content.paragraphs.every(
+      (paragraph, index) =>
+        paragraph.pid === paragraphs[index]?.pid && paragraph.text === paragraphs[index]?.text,
+    )
+  )
 }
 
 /**
@@ -178,7 +200,7 @@ export function pendingDraftView(
   draft: DraftSnapshot,
 ): PendingDraftView | undefined {
   const write = pendingWrite(call)
-  const standing = pendingStanding(write, draft.version)
+  const standing = pendingStanding(write, draft.version, draft.paragraphs)
   if (write === undefined || standing === undefined) {
     return undefined
   }
