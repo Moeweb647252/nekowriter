@@ -4190,3 +4190,12 @@ as before. The Demo provider now exercises the path spec/04 §7.2 describes, and
   the new key. `kickoff_baseline` changes shape (one block becomes four) and must be reviewed per
   session kind. A prompt edit that changes one section's text still changes only that section's part
   in the treemap.
+- **Smoke (M24 24.4, Demo provider).** On a fresh book with an approved chapter 1, a chapter 2
+  writer session ran to completion. From the agent footer, **Kickoff** zoomed into Outline,
+  Characters, World, Protagonist, Recent, Entities, Facts and Foreshadowing in the Chinese UI, with
+  no `block.settings` or `block.memory` parent labels. **Tool results** showed `insert_text` and
+  `finish_draft` as one part per tool, unsplit. **List** showed the same eight names. Switching the
+  UI to Chinese kept every label Chinese with no English text leaking. The screenshots are
+  `docs/screenshots/m24-context-kickoff-zh-zoomed.png`,
+  `docs/screenshots/m24-context-kickoff-zh-list.png` and
+  `docs/screenshots/m24-context-tool-results-zh.png`.
