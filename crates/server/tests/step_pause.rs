@@ -256,3 +256,94 @@ async fn empty_pause_body_is_a_hold_pause() {
     let row = runtime.wait_status(id, SessionStatus::Held).await;
     assert!(row.held_tool_call_id.is_some());
 }
+
+/// H-1: a stale runner copy that saw the pause is not allowed to pause after a concurrent resume
+/// cleared it; the guarded update misses and returns `None`.
+#[tokio::test]
+async fn guarded_pause_misses_after_a_resume_clears_it() {
+    use nekowriter::agent::session::{self as agent_session, TransitionCause};
+    use nekowriter::db::entities::agent_sessions;
+    use nekowriter::db::json::SessionStatus;
+    use sea_orm::EntityTrait;
+
+    let runtime = runtime(vec![insert_step("第一段。", false)]).await;
+    let id = start_writer(&runtime, Granularity::Paragraph, false, false).await;
+    tokio::time::sleep(Duration::from_millis(40)).await;
+    let (status, _) = pause(&runtime, id, json!({ "after_step": true })).await;
+    assert_eq!(status, StatusCode::OK);
+    let stale = agent_sessions::Entity::find_by_id(id)
+        .one(runtime.app.db().conn())
+        .await
+        .expect("query")
+        .expect("session");
+    let (status, _) = resume(&runtime, id, json!({})).await;
+    assert_eq!(status, StatusCode::OK);
+    let missed = agent_session::transition_if_pause_requested(
+        runtime.app.db().conn(),
+        &stale,
+        SessionStatus::Paused,
+        TransitionCause::PauseBeforeRequest,
+    )
+    .await
+    .expect("guarded transition");
+    assert!(
+        missed.is_none(),
+        "the cleared pause must miss the guarded update"
+    );
+    let current = runtime.session_row(id).await;
+    assert_ne!(current.status, "paused");
+}
+
+/// M-2: a running-pause resume queues exactly one inbox row and emits a session.updated event.
+#[tokio::test]
+async fn resume_running_pause_queues_one_message_and_emits_session_updated() {
+    use nekowriter::db::entities::agent_inbox;
+    use nekowriter::events::ServerEvent;
+    use sea_orm::{ColumnTrait, EntityTrait, PaginatorTrait, QueryFilter};
+
+    let runtime = runtime(vec![insert_step("第一段。", false)]).await;
+    let id = start_writer(&runtime, Granularity::Paragraph, false, false).await;
+    tokio::time::sleep(Duration::from_millis(40)).await;
+    let _ = pause(&runtime, id, json!({ "after_step": true })).await;
+    let mut events = runtime.app.state().events().subscribe();
+    let (status, _) = resume(&runtime, id, json!({ "feedback": "只发一次" })).await;
+    assert_eq!(status, StatusCode::OK);
+    runtime
+        .wait_event(&mut events, Duration::from_secs(5), |event| {
+            matches!(event, ServerEvent::SessionUpdated { session, .. } if session.id == id)
+        })
+        .await;
+    let count = agent_inbox::Entity::find()
+        .filter(agent_inbox::COLUMN.session_id.eq(id))
+        .filter(
+            agent_inbox::COLUMN
+                .kind
+                .eq(nekowriter::db::json::InboxKind::UserMessage),
+        )
+        .count(runtime.app.db().conn())
+        .await
+        .expect("inbox count");
+    assert_eq!(count, 1, "exactly one feedback message is queued");
+}
+
+/// M-1: editing the draft while the write is held makes the keep-write apply a no-op (D-141).
+#[tokio::test]
+async fn keep_write_drops_a_superseded_staged_write() {
+    let runtime = runtime(vec![insert_step("代理段落。", false)]).await;
+    let id = start_writer(&runtime, Granularity::Paragraph, true, false).await;
+    let row = runtime.wait_status(id, SessionStatus::Held).await;
+    assert!(row.held_tool_call_id.is_some());
+    runtime
+        .app
+        .put_text(runtime.chapter_id, 0, "作者改写后的段落。")
+        .await;
+    let (status, _) = resume(
+        &runtime,
+        id,
+        json!({ "feedback": "保留我的版本，继续", "keep_write": true }),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let content = chapter_content(&runtime, runtime.chapter_id).await;
+    assert_eq!(content.paragraphs[0].text, "作者改写后的段落。");
+}

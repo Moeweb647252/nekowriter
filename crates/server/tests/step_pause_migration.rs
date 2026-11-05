@@ -107,3 +107,66 @@ async fn fresh_and_upgraded_databases_expose_the_same_flag_column() {
     assert_eq!(fresh_type, 1);
     assert_eq!(upgraded_type, 1);
 }
+
+/// Execute a corrupted copy of 0014 in one transaction: the guard must roll the ALTER back, and a
+/// retry of the real migration must succeed.
+async fn rejected_copy(tamper: &str) -> (tempfile::TempDir, Db) {
+    let (dir, db) = pre_0014_database().await;
+    let sql = include_str!("../../migration/src/sql/0014_step_pause.sql").replace(
+        "ALTER TABLE agent_sessions ADD COLUMN pause_after_step INTEGER NOT NULL DEFAULT 0;",
+        &format!("ALTER TABLE agent_sessions ADD COLUMN pause_after_step INTEGER NOT NULL DEFAULT 0;\n{tamper}"),
+    );
+    let failed = db
+        .write(move |tx| {
+            Box::pin(async move {
+                sea_orm::ConnectionTrait::execute_unprepared(tx, &sql).await?;
+                Ok(())
+            })
+        })
+        .await;
+    assert!(failed.is_err(), "the guard rejects the corrupt copy");
+    assert_eq!(
+        scalar(
+            db.conn(),
+            "SELECT count(*) AS n FROM pragma_table_info('agent_sessions') WHERE name = 'pause_after_step'"
+        )
+        .await,
+        0,
+        "the failed copy rolled the column back"
+    );
+    assert_eq!(
+        scalar(
+            db.conn(),
+            "SELECT count(*) AS n FROM seaql_migrations WHERE version = 'm0014_step_pause'"
+        )
+        .await,
+        0
+    );
+    nekowriter_migration::up(db.conn())
+        .await
+        .expect("the retry applies 0014");
+    (dir, db)
+}
+
+#[tokio::test]
+async fn a_lost_session_trips_the_count_guard_and_rolls_back() {
+    let (_dir, db) = rejected_copy("DELETE FROM agent_sessions WHERE id = 1;").await;
+    assert_eq!(
+        scalar(db.conn(), "SELECT count(*) AS n FROM agent_sessions").await,
+        1
+    );
+}
+
+#[tokio::test]
+async fn a_nonzero_existing_flag_trips_the_value_guard_and_rolls_back() {
+    let (_dir, db) =
+        rejected_copy("UPDATE agent_sessions SET pause_after_step = 1 WHERE id = 1;").await;
+    assert_eq!(
+        scalar(
+            db.conn(),
+            "SELECT count(*) AS n FROM agent_sessions WHERE pause_after_step = 0"
+        )
+        .await,
+        1
+    );
+}
