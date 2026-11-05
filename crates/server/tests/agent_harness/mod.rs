@@ -558,14 +558,12 @@ impl MessageRow {
         serde_json::from_str(&self.content).unwrap_or_default()
     }
 
-    /// The joined text of the message's text blocks.
+    /// The joined text of the message's text blocks, using the same child-block boundaries as
+    /// the provider request (`build_request`).
     pub fn text(&self) -> String {
-        self.blocks()
+        nekowriter::agent::context::join_text_blocks(&self.blocks())
             .into_iter()
-            .filter_map(|block| match block {
-                nekowriter::db::json::StoredBlock::Text { text, .. } => Some(text),
-                _ => None,
-            })
+            .map(|block| block.text)
             .collect::<Vec<_>>()
             .join("\n\n")
     }

@@ -2102,6 +2102,81 @@ async fn prep_context(
 
 // ───────────────────────────── request building ─────────────────────────────
 
+/// The separator between two adjacent child prompt blocks of one parent.
+///
+/// The parent template has a single newline at most boundaries; the first chapter's short-term
+/// state leaves a blank line before the entity section.
+pub fn child_text_separator(previous: &str, next: &str, previous_text: &str) -> &'static str {
+    match (previous, next) {
+        ("block.memory.recent", "block.memory.entities")
+            if previous_text.contains("这是本书") || previous_text.contains("暂无前文") =>
+        {
+            "\n\n"
+        }
+        ("block.memory.recent", "block.memory.entities")
+        | ("block.memory.facts", "block.memory.foreshadowing") => "\n",
+        _ => "\n\n",
+    }
+}
+
+/// Joins the text blocks of a kickoff the way the provider receives them.
+///
+/// The settings and memory children are persisted as separate `StoredBlock::Text` items so the
+/// breakdown keeps its parts, but they are one parent prompt in the model input. Their boundary
+/// separator is the one the old parent used: the settings children keep the parent's blank line,
+/// while the short-term/entity and facts/foreshadowing boundaries use a single newline.
+pub fn join_text_blocks(blocks: &[crate::db::json::StoredBlock]) -> Vec<nekowriter_llm::TextBlock> {
+    fn parent_of(source: &str) -> Option<&str> {
+        if source.starts_with("block.settings.") {
+            Some("settings")
+        } else if source.starts_with("block.memory.") {
+            Some("memory")
+        } else {
+            None
+        }
+    }
+
+    let mut texts: Vec<nekowriter_llm::TextBlock> = Vec::new();
+    let mut previous_source: Option<String> = None;
+    for block in blocks {
+        let crate::db::json::StoredBlock::Text {
+            text,
+            cache,
+            source,
+        } = block
+        else {
+            continue;
+        };
+        let source = source.as_deref().unwrap_or_default();
+        let same_parent = match (
+            previous_source.as_deref().and_then(parent_of),
+            parent_of(source),
+        ) {
+            (Some(previous_parent), Some(next_parent)) if previous_parent == next_parent => {
+                previous_source.as_deref()
+            }
+            _ => None,
+        };
+        if let Some(previous) = same_parent
+            && let Some(last) = texts.last_mut()
+        {
+            let previous_text = last.text.clone();
+            last.text
+                .push_str(child_text_separator(previous, source, &previous_text));
+            last.text.push_str(text);
+            last.cache |= cache.unwrap_or(false);
+            previous_source = Some(source.to_owned());
+            continue;
+        }
+        texts.push(nekowriter_llm::TextBlock {
+            text: text.clone(),
+            cache: cache.unwrap_or(false),
+        });
+        previous_source = Some(source.to_owned());
+    }
+    texts
+}
+
 /// Builds the provider request of one session **from persisted state only** (spec/03 §11).
 ///
 /// Invariant checked before sending: every tool call of every assistant message has a sealed
@@ -2121,17 +2196,9 @@ pub async fn build_request(
     for message in super::runner::messages_of(conn, session.id).await? {
         if message.role == MessageRole::User {
             let blocks: Vec<StoredBlock> = message.content.clone().into_inner();
-            let blocks = blocks
-                .into_iter()
-                .filter_map(|block| match block {
-                    StoredBlock::Text { text, cache, .. } => Some(nekowriter_llm::TextBlock {
-                        text,
-                        cache: cache.unwrap_or(false),
-                    }),
-                    _ => None,
-                })
-                .collect();
-            messages.push(nekowriter_llm::Message::User { blocks });
+            messages.push(nekowriter_llm::Message::User {
+                blocks: join_text_blocks(&blocks),
+            });
             continue;
         }
         let payload: json::ProviderPayload = message

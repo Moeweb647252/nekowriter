@@ -1473,6 +1473,8 @@ fn render_block_memory(prompts: &PromptSet, snapshot: &MemorySnapshot) -> Result
         "systems": crate::prompts::context::SystemsContext::from(&snapshot.systems),
     }));
     let mut text = String::new();
+    let mut previous: Option<&str> = None;
+    let mut previous_text = String::new();
     for key in [
         "block.memory.recent",
         "block.memory.entities",
@@ -1483,10 +1485,16 @@ fn render_block_memory(prompts: &PromptSet, snapshot: &MemorySnapshot) -> Result
             .render_value(key, context.clone())
             .map_err(|err| err.into_app_error())?;
         if !rendered.text.is_empty() {
-            if !text.is_empty() {
-                text.push_str("\n\n");
+            if let Some(previous) = previous {
+                text.push_str(crate::agent::context::child_text_separator(
+                    previous,
+                    key,
+                    &previous_text,
+                ));
             }
             text.push_str(&rendered.text);
+            previous = Some(key);
+            previous_text = rendered.text;
         }
     }
     Ok(text)

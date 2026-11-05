@@ -850,7 +850,21 @@ async fn the_memory_page_rendered_text_matches_the_writers_memory_block() {
         .iter()
         .position(|block| block.starts_with("# 记忆"))
         .expect("the writer's memory blocks");
-    let memory_text = blocks[memory_start..memory_start + 4].join("\n\n");
+    let memory_keys = [
+        "block.memory.recent",
+        "block.memory.entities",
+        "block.memory.facts",
+        "block.memory.foreshadowing",
+    ];
+    let mut memory_text = blocks[memory_start].clone();
+    for index in 1..memory_keys.len() {
+        memory_text.push_str(nekowriter::agent::context::child_text_separator(
+            memory_keys[index - 1],
+            memory_keys[index],
+            &blocks[memory_start + index - 1],
+        ));
+        memory_text.push_str(&blocks[memory_start + index]);
+    }
     assert_eq!(
         rendered, memory_text,
         "the Memory page shows the exact block.memory text the writer receives"

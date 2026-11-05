@@ -5,7 +5,7 @@
 
 use minijinja::syntax::SyntaxConfig;
 use minijinja::{AutoEscape, Environment, UndefinedBehavior};
-use nekowriter::agent::context::kickoff_blocks;
+use nekowriter::agent::context::{join_text_blocks, kickoff_blocks};
 use nekowriter::db::json::SessionKind;
 use nekowriter::prompts::{PromptRegistry, template_value};
 
@@ -28,10 +28,6 @@ fn old_environment() -> Environment<'static> {
     env.add_template_owned("block.memory".to_owned(), OLD_MEMORY)
         .unwrap();
     env
-}
-
-fn compact(text: &str) -> String {
-    text.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 fn normalize(text: &str) -> String {
@@ -58,9 +54,20 @@ fn render_children(
     context: &serde_json::Value,
 ) -> String {
     let set = registry.defaults_only();
-    keys.iter()
-        .map(|key| set.render_value(key, template_value(context)).unwrap().text)
-        .filter(|text| !text.is_empty())
+    let blocks: Vec<nekowriter::db::json::StoredBlock> = keys
+        .iter()
+        .filter_map(|key| {
+            let text = set.render_value(key, template_value(context)).unwrap().text;
+            (!text.is_empty()).then(|| nekowriter::db::json::StoredBlock::Text {
+                text,
+                cache: None,
+                source: Some((*key).to_owned()),
+            })
+        })
+        .collect();
+    join_text_blocks(&blocks)
+        .into_iter()
+        .map(|block| block.text)
         .collect::<Vec<_>>()
         .join("\n\n")
 }
@@ -111,14 +118,14 @@ fn child_kickoff_blocks_are_byte_identical_to_the_old_parents() {
                 .into_iter()
                 .next()
                 .unwrap();
-            let old = compact(
+            let old = normalize(
                 &old_env
                     .get_template("block.memory")
                     .unwrap()
                     .render(template_value(&context))
                     .unwrap(),
             );
-            let new = compact(&render_children(&registry, &memory_keys, &context));
+            let new = normalize(&render_children(&registry, &memory_keys, &context));
             assert_eq!(new, old, "memory for {kind:?}");
         }
     }
