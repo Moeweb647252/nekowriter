@@ -515,7 +515,15 @@
       "book_index": "Book index",
       "first_message": "First message",
       "task": "Task",
-      "unlabeled": "Block {{number}}"
+      "unlabeled": "Block {{number}}",
+      "settings_outline": "Outline",
+      "settings_characters": "Characters",
+      "settings_world": "World",
+      "settings_protagonist": "Protagonist",
+      "memory_recent": "Recent",
+      "memory_entities": "Entities",
+      "memory_facts": "Facts",
+      "memory_foreshadowing": "Foreshadowing"
     },
     "tooltip": {
       "share": "{{share}}%",
