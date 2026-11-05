@@ -130,3 +130,35 @@ fn child_kickoff_blocks_are_byte_identical_to_the_old_parents() {
         }
     }
 }
+
+/// H-1: a later chapter without a previous tail exercises the ordinary memory separators. The
+/// assembled child text must match the old parent's stored rendering byte for byte.
+#[test]
+fn later_chapter_memory_children_are_byte_identical_to_the_old_parent() {
+    let registry = PromptRegistry::embedded().unwrap();
+    let old_env = old_environment();
+    let mut context = registry
+        .sample_contexts("block.memory.recent")
+        .into_iter()
+        .next()
+        .unwrap();
+    context["memory"]["is_first"] = serde_json::json!(false);
+    context["memory"]["previous_tail"] = serde_json::Value::Null;
+    context["chapter"]["number"] = serde_json::json!(3);
+    context["chapter"]["label"] = serde_json::json!("第3章");
+    let keys = [
+        "block.memory.recent",
+        "block.memory.entities",
+        "block.memory.facts",
+        "block.memory.foreshadowing",
+    ];
+    let old = normalize(
+        &old_env
+            .get_template("block.memory")
+            .unwrap()
+            .render(template_value(&context))
+            .unwrap(),
+    );
+    let new = render_children(&registry, &keys, &context);
+    assert_eq!(new, old, "later-chapter memory joins byte-exactly");
+}
